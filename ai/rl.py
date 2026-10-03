@@ -65,6 +65,36 @@ def sel_bucket(sel):
 # ------------------------------------------------------------
 # Features: structure only, never names
 # ------------------------------------------------------------
+def drive_bucket(ratio):
+    """Rows driving an index lookup, relative to the indexed table's size."""
+    if ratio is None:
+        return "drive=n/a"
+    return "drive=" + ("tiny" if ratio < 0.001 else "small" if ratio < 0.05 else "large")
+
+
+def filtered_rows(table, info, stats):
+    """Estimated rows of a table after its own exact-match and range filters."""
+    rows = stats["rows"].get(table, 0)
+    for key, v in info["columns"].items():
+        t, c = key.split(".", 1)
+        if t == table:
+            if "eq_filter" in v["roles"] and "or_filter" not in v["roles"]:
+                rows *= stats["eq_sel"].get(key, 1.0)
+            if "range_filter" in v["roles"]:
+                rows *= stats["range_sel"].get(key, 1.0)
+    return rows
+
+
+def driving_ratio(table, col, info, stats, pairs):
+    """For an index starting with join column `col` on `table`: how many rows would look
+    it up (the smallest filtered partner table), relative to the table's size."""
+    partners = [tb for ta, ca, tb, cb in pairs if (ta, ca) == (table, col)] +                [ta for ta, ca, tb, cb in pairs if (tb, cb) == (table, col)]
+    rows = stats["rows"].get(table, 0)
+    if not partners or not rows:
+        return None
+    return min(filtered_rows(p, info, stats) for p in partners) / rows
+
+
 def state_key(info, stats):
     """Shape of the query."""
     roles = [set(v["roles"]) for v in info["columns"].values()]
@@ -91,8 +121,9 @@ def _col_role(roles):
     return "other"
 
 
-def action_key(c, info, stats):
-    """Kind of fix: role pattern of its columns, selectivity, width, table size."""
+def action_key(c, info, stats, pairs=()):
+    """Kind of fix: role pattern of its columns, selectivity, driving rows (join indexes
+    only), width, table size."""
     if c["kind"] == "rewrite":
         biggest = max((stats["rows"].get(t, 0) for t in info["tables"]), default=0)
         return ("rewrite", c["rule"], "size=" + size_bucket(biggest))
@@ -114,8 +145,12 @@ def action_key(c, info, stats):
             break
         else:
             break
-    return ("index", pattern, "sel=" + sel_bucket(sel if known else None),
+    drive = driving_ratio(table, cols[0], info, stats, pairs) if roles[0] & JOIN_ROLES else None
+    return ("index", pattern, "sel=" + sel_bucket(sel if known else None), drive_bucket(drive),
             "width=" + str(len(cols)), "size=" + size_bucket(rows))
+
+
+JOIN_ROLES = {"join", "correlated", "not_in"}
 
 
 def write_width(c):
@@ -141,7 +176,7 @@ class BanditAgent:
     def __init__(self, seed=SEED):
         self.rng = random.Random(seed)
         # Five levels of the lookup table, most specific first: [sum of rewards, tries]
-        self.levels = [defaultdict(lambda: [0.0, 0]) for _ in range(5)]
+        self.levels = [defaultdict(lambda: [0.0, 0]) for _ in range(6)]
 
     @staticmethod
     def _keys(s, a):
@@ -150,6 +185,10 @@ class BanditAgent:
         on any query; levels 3-5 drop details in the order FALLBACK says."""
         kind, pattern, size = a[0], a[1], a[-1]
         sel = next((x for x in a if x.startswith("sel=")), "sel=n/a")
+        drive = next((x for x in a if x.startswith("drive=")), "drive=n/a")
+        if drive != "drive=n/a":
+            # join-column index: HOW MANY rows drive the lookup matters more than table size
+            return [(s, a), a, (kind, sel, drive, size), (kind, drive, size), (kind, drive), (kind,)]
         if FALLBACK == "pattern-first":
             general = [(kind, pattern, size), (kind, pattern), (kind,)]
         else:
@@ -181,7 +220,8 @@ class BanditAgent:
         info = sqlinfo.analyze(masked_sql, column_types)
         s = state_key(info, stats)
         cands = cand_mod.candidates(masked_sql, column_types, stats.get("existing_indexes"))
-        entries = [(c, action_key(c, info, stats)) for c in cands]
+        pairs = sqlinfo.join_pairs(masked_sql)
+        entries = [(c, action_key(c, info, stats, pairs)) for c in cands]
         entries.sort(key=lambda e: self._order(s, e))      # stable: list order only if fully tied
         return s, [(self.score(s, a), c, a) for c, a in entries]
 

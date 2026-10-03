@@ -166,6 +166,20 @@ def analyze(masked_sql, column_types=None):
     }
 
 
+def join_pairs(masked_sql):
+    """[(table_a, col_a, table_b, col_b)] for every  a.x = b.y  linking two different tables,
+    including links inside subqueries (correlated / EXISTS)."""
+    tree = parse(masked_sql)
+    alias = {t.alias_or_name: t.name for t in tree.find_all(exp.Table)}
+    pairs = []
+    for eq in tree.find_all(exp.EQ):
+        a, b = eq.this, eq.expression
+        if isinstance(a, exp.Column) and isinstance(b, exp.Column) and a.table in alias and b.table in alias:
+            if alias[a.table] != alias[b.table]:
+                pairs.append((alias[a.table], a.name, alias[b.table], b.name))
+    return pairs
+
+
 def filter_columns(info):
     """Columns that are worth indexing: used to filter or join (not just displayed)."""
     useful = {"eq_filter", "range_filter", "join", "or_filter", "correlated", "not_in", "in_subquery"}
