@@ -93,7 +93,11 @@ def test_question_shows_match_privacy_badge_masked_query_and_plan():
 
 
 def test_unsafe_sql_shows_an_error_and_history_keeps_both_questions():
-    with fresh_audit_log(), patched(llm, "_call_ollama", _no_ollama), patched(llm, "start_warmup", lambda: None):
+    with ExitStack() as stack:
+        stack.enter_context(fresh_audit_log())
+        for obj, name, value in [(llm, "_call_ollama", _no_ollama), (llm, "start_warmup", lambda: None),
+                                 *AI_STAND_INS]:      # no real sandbox runs: they share a lock with the team
+            stack.enter_context(patched(obj, name, value))
         at = run_app(QUESTION, "select 1; drop table orders")
         assert [m.name for m in at.chat_message] == ["user", "assistant", "user", "assistant"]
         assert [e.value for e in at.error] == ["Paste exactly one SQL statement."]

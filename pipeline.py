@@ -197,15 +197,41 @@ SIMULATABLE_ACTION = re.compile(
     r"|PARTITION\s+\w+\s+BY\s+RANGE\s*\(\s*\w+\s*\)\s+MONTHLY)\s*;?\s*", re.I | re.S)
 
 
-def make_cost_fn(original_sql, masked_original, mapping):
+def _restorer(original_sql, mapping):
+    """Returns restore(sql): puts the admin's REAL values back where the masker wrote $1, $2.
+
+    !!! PRIVATE. The text it returns holds real values. It may be used in exactly two places
+    (see "RESTORE POINT" comments): right before a sandbox call, and when building the Approve
+    script. It must NEVER reach ai/, the LLM prompt, the audit log, a cache key or the result
+    dict (apart from deploy_sql, which is the Approve script).
+
+    The masker keeps value -> number but not whether a value was text or a number, so the
+    kind is read from the original SQL. Text is quoted with ' doubled, so a hostile value
+    cannot end its own quotes and add SQL; a number stays bare.
+    """
+    kinds = {}
+    for lit in sqlglot.parse_one(original_sql, read="postgres").find_all(exp.Literal):
+        kinds.setdefault(str(lit.this), lit.is_string)
+    texts = {n: ("'" + v.replace("'", "''") + "'") if kinds.get(v, True) else v
+             for v, n in (getattr(mapping, "query_params", None) or {}).items()}
+
+    def restore(sql):
+        return re.sub(r"\$(\d+)", lambda m: texts.get(int(m.group(1)), m.group()), sql)
+    return restore
+
+
+def make_cost_fn(original_sql, masked_original, mapping, restore=None):
     """The AI's only window into the database for planner costs: masked text in, a number out."""
+    restore = restore or (lambda sql: sql)
+
     def cost_fn(m_sql, m_actions):
         for action in m_actions:
             if not SIMULATABLE_ACTION.fullmatch(action):
-                raise ValueError(f"cannot simulate this action (only CREATE INDEX): {action[:40]}")
-        # The unchanged query is costed exactly as the admin wrote it; a REWRITE arrives
-        # as new masked SQL and has to be un-masked first.
-        sql = original_sql if m_sql == masked_original else mask.unmask(m_sql, mapping)
+                raise ValueError(f"cannot simulate this action (only CREATE INDEX or MONTHLY PARTITION): {action[:40]}")
+        # RESTORE POINT 1 of 3 (sandbox call). The unchanged query is costed exactly as the
+        # admin wrote it; a REWRITE arrives as masked SQL with $1, $2 and gets its real values
+        # back HERE, only to be costed by the sandbox. The AI gets a number back, nothing else.
+        sql = original_sql if m_sql == masked_original else restore(mask.unmask(m_sql, mapping))
         return sandbox.cost(sql, [mask.unmask(a, mapping) for a in m_actions])
     return cost_fn
 
@@ -215,7 +241,7 @@ class TimeCheckError(RuntimeError):
     message could contain real names, and it must not reach the audit log."""
 
 
-def make_time_fn(original_sql, masked_original, mapping, checks):
+def make_time_fn(original_sql, masked_original, mapping, checks, restore=None):
     """time_fn for ai/, or None until Person 1's sandbox has checked_run().
 
     The real run returns {"ms", "rows", "checksum"}. Rows and checksum are compared HERE
@@ -224,11 +250,14 @@ def make_time_fn(original_sql, masked_original, mapping, checks):
     run = getattr(sandbox, "checked_run", None)
     if run is None:
         return None
+    restore = restore or (lambda sql: sql)
     baseline = {}
 
     def time_fn(m_sql):
         try:
-            sql = original_sql if m_sql == masked_original else mask.unmask(m_sql, mapping)
+            # RESTORE POINT 2 of 3 (sandbox call): a rewrite gets its real values back HERE, only
+            # to be run on the sandbox copy. ai/ gets {"ms", "results_match"}, never the SQL.
+            sql = original_sql if m_sql == masked_original else restore(mask.unmask(m_sql, mapping))
             if "run" not in baseline:
                 baseline["run"] = run(original_sql)
             base = baseline["run"]
@@ -367,7 +396,8 @@ def analyze(question):
         if PRIVACY_STRICT:
             raise PrivacyError(BLOCKED_MESSAGE)
 
-    cost_fn = make_cost_fn(q["sql"], masked_sql, mapping)
+    restore = _restorer(q["sql"], mapping)      # private: never passed to ai/ or the LLM (see _restorer)
+    cost_fn = make_cost_fn(q["sql"], masked_sql, mapping, restore)
 
     # ---- AI side: masked data only ----
     bottleneck = gnn.find_bottleneck(masked_plan)
@@ -376,7 +406,7 @@ def analyze(question):
     # supplies it exists yet; otherwise it is simply left out (no crash, no fake data).
     takes = _accepted(rl.recommend, ("time_fn", "stats", "column_types"))
     checks, extra, ai_inputs = [], {}, {}
-    time_fn = make_time_fn(q["sql"], masked_sql, mapping, checks) if "time_fn" in takes else None
+    time_fn = make_time_fn(q["sql"], masked_sql, mapping, checks, restore) if "time_fn" in takes else None
     if time_fn:
         extra["time_fn"] = time_fn
     ai_inputs["time_fn"] = ("used" if time_fn else "not available yet") if "time_fn" in takes \
@@ -422,7 +452,9 @@ def analyze(question):
                   and mask.verify_no_leak(explanation, mapping, free_text=True))
 
     # ---- back on the real side: un-mask only for the admin's screen ----
-    deploy_sql = mask.unmask(best.get("action") or "", mapping)
+    # RESTORE POINT 3 of 3 (the Approve script, for the admin's eyes only). This runs AFTER the
+    # AI and the LLM are finished, and the text goes only into deploy_sql.
+    deploy_sql = restore(mask.unmask(best.get("action") or "", mapping))
     measure = _single_create_index(best, deploy_sql)
     t_before = _measured("time_before", lambda: sandbox.timed_run(q["sql"]), measure, match)
     t_after = _measured("time_after", lambda: sandbox.timed_run(q["sql"], [deploy_sql]), measure, match)
