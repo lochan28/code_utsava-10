@@ -4,3 +4,7 @@ pandas>=2.2
 numpy>=1.26
 streamlit>=1.38
 requests>=2.32
+# torch needs the CUDA 12.8 build (RTX 5060 / Blackwell). Install it with:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+torch>=2.7
+torch_geometric>=2.6
