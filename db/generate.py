@@ -51,6 +51,12 @@ STATUS_P = [0.70, 0.12, 0.08, 0.06, 0.04]
 SEGMENTS = ["consumer", "corporate", "small_business"]
 
 SCHEMA = """
+DROP SCHEMA IF EXISTS sandbox CASCADE;  -- stale copies; db/sandbox.py rebuilds them
+DO $$ DECLARE s text; BEGIN  -- stale partitioned copies (part_<table>_<column>)
+  FOR s IN SELECT nspname FROM pg_namespace WHERE left(nspname, 5) = 'part_' LOOP
+    EXECUTE format('DROP SCHEMA %I CASCADE', s);
+  END LOOP;
+END $$;
 DROP TABLE IF EXISTS orders, customers, products, regions CASCADE;
 CREATE TABLE regions   (region_id int PRIMARY KEY, name text, country text);
 CREATE TABLE customers (customer_id int PRIMARY KEY, name text, email text,
