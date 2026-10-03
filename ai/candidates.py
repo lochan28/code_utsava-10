@@ -23,6 +23,10 @@ PROPOSE_PARTITIONS_WITHOUT_TYPES = True  # Column types aren't available from pr
                                          # True: propose partitioning on any range-filtered
                                          # column and let cost_fn judge. False: only when
                                          # the column is known to be a date.
+PARTITION_SKIP_KEY_COLUMNS = True  # TEMPORARY guess while column types are missing: don't
+                                   # partition on a column that is also a join/lookup key
+                                   # (keys like customer_id are rarely good partition columns;
+                                   # dates are rarely join keys). Ignored once types exist.
 
 # ============================================================
 # FIXED SETTINGS - formats agreed with the team
@@ -102,19 +106,33 @@ def or_candidates(info):
     return found
 
 
+KEY_ROLES = {"join", "correlated", "not_in", "in_subquery"}
+
+
+def partition_column_ok(roles, col_type=None):
+    """Is this column worth partitioning on?  The ONE place to change when privacy/
+    starts sending column types: then simply  return col_type == "date"  (plus the
+    range check)."""
+    if not {"range_filter", "func_filter"} & roles:
+        return False                     # exact-match-only or join-only: never
+    if col_type is not None:
+        return col_type == "date"        # real type known: trust it
+    if not PROPOSE_PARTITIONS_WITHOUT_TYPES:
+        return False
+    if PARTITION_SKIP_KEY_COLUMNS and roles & KEY_ROLES:
+        return False                     # temporary guess: keys aren't partition columns
+    return True
+
+
 def partition_candidates(info):
     found = []
     for key, v in info["columns"].items():
         table, col = key.split(".", 1)
         if table == sqlinfo.UNKNOWN_TABLE:
             continue
-        if not {"range_filter", "func_filter"} & set(v["roles"]):
+        if not partition_column_ok(set(v["roles"]), v.get("type")):
             continue
         known_type = v.get("type")
-        if known_type is not None and known_type != "date":
-            continue
-        if known_type is None and not PROPOSE_PARTITIONS_WITHOUT_TYPES:
-            continue
         for scheme in PARTITION_SCHEMES:
             found.append({"kind": "partition",
                           "sqls": [PARTITION_FORMAT.format(table=table, col=col, scheme=scheme)],

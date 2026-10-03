@@ -40,6 +40,14 @@ WRITE_PENALTY_PER_COL = 0.03   # Reward cost of each index column (slower writes
 PARTITION_WRITE_WIDTH = 1      # Partitioning counted as this many index columns of penalty.
 BACKOFF_STRENGTH = 2.0    # How many real tries it takes before a specific (query kind, fix kind)
                           # estimate outweighs the more general fallback estimate.
+VERIFY_TOP_K = 3          # Safety net: really simulate the agent's top K picks with cost_fn
+                          # and keep the best. Costs K+1 cost_fn calls per query (1 = baseline).
+                          # 0 = trust the agent blindly; higher = safer but more simulations.
+FALLBACK = "selectivity-first"   # What the agent keeps when a fix kind is new to it:
+    # "pattern-first":     exact fix -> role pattern + table size -> role pattern -> fix type
+    #                      (keeps WHICH columns; forgets how selective / how big)
+    # "selectivity-first": exact fix -> selectivity + table size -> table size -> fix type
+    #                      (keeps HOW MUCH it filters and how big the table is)
 
 # ============================================================
 # FIXED SETTINGS - bucket edges for describing queries and fixes
@@ -132,39 +140,49 @@ def evaluate(masked_sql, c, cost_fn, before=None):
 class BanditAgent:
     def __init__(self, seed=SEED):
         self.rng = random.Random(seed)
-        # three levels of the lookup table: [sum of rewards, number of tries]
-        self.specific = defaultdict(lambda: [0.0, 0])   # (query kind, fix kind)
-        self.general = defaultdict(lambda: [0.0, 0])    # fix kind on any query
-        self.coarse = defaultdict(lambda: [0.0, 0])     # fix type + table size
+        # Five levels of the lookup table, most specific first: [sum of rewards, tries]
+        self.levels = [defaultdict(lambda: [0.0, 0]) for _ in range(5)]
 
     @staticmethod
-    def _coarse(a):
-        return (a[0], a[-1])
+    def _keys(s, a):
+        """Keys from most specific to most general (see FALLBACK at the top).
+        Level 1 = this kind of query + this exact fix kind; level 2 = this exact fix kind
+        on any query; levels 3-5 drop details in the order FALLBACK says."""
+        kind, pattern, size = a[0], a[1], a[-1]
+        sel = next((x for x in a if x.startswith("sel=")), "sel=n/a")
+        if FALLBACK == "pattern-first":
+            general = [(kind, pattern, size), (kind, pattern), (kind,)]
+        else:
+            general = [(kind, sel, size), (kind, size), (kind,)]
+        return [(s, a), a] + general
 
     def score(self, s, a):
-        """Estimated reward, blending specific -> general -> coarse knowledge."""
+        """Estimated reward. Start from the most general level and refine it with each
+        more specific level, in proportion to how many real tries that level has."""
         k = BACKOFF_STRENGTH
-        sc, nc = self.coarse[self._coarse(a)]
-        m3 = sc / nc if nc else 0.0
-        sg, ng = self.general[a]
-        m2 = (sg + k * m3) / (ng + k)
-        ss, ns = self.specific[(s, a)]
-        return (ss + k * m2) / (ns + k)
+        est = 0.0
+        for table, key in reversed(list(zip(self.levels, self._keys(s, a)))):
+            total, n = table[key]
+            est = (total + k * est) / (n + k)
+        return est
 
     def update(self, s, a, reward):
-        for table, key in ((self.specific, (s, a)), (self.general, a), (self.coarse, self._coarse(a))):
+        for table, key in zip(self.levels, self._keys(s, a)):
             table[key][0] += reward
             table[key][1] += 1
+
+    def _order(self, s, entry):
+        """Sort key: highest score first; on a tie, the CHEAPER fix (lower write penalty)."""
+        c, a = entry
+        return (-round(self.score(s, a), 6), write_width(c))
 
     def rank(self, masked_sql, stats, column_types=None):
         """All candidates, best predicted first: [(score, candidate, action_key)]."""
         info = sqlinfo.analyze(masked_sql, column_types)
         s = state_key(info, stats)
-        cands = cand_mod.candidates(masked_sql, column_types)
-        scored = [(self.score(s, action_key(c, info, stats)), i, c, action_key(c, info, stats))
-                  for i, c in enumerate(cands)]
-        scored.sort(key=lambda x: (-x[0], x[1]))
-        return s, [(sc, c, a) for sc, _, c, a in scored]
+        entries = [(c, action_key(c, info, stats)) for c in cand_mod.candidates(masked_sql, column_types)]
+        entries.sort(key=lambda e: self._order(s, e))      # stable: list order only if fully tied
+        return s, [(self.score(s, a), c, a) for c, a in entries]
 
     def train(self, episodes, n=EPISODES):
         """episodes: [(masked_sql, stats, cost_fn)]. Results are cached per (query, fix),
@@ -181,7 +199,7 @@ class BanditAgent:
             if self.rng.random() < eps:
                 _, c, a = self.rng.choice(ranked)
             else:   # best by CURRENT estimates (re-score: estimates change while learning)
-                _, c, a = max(ranked, key=lambda x: self.score(s, x[2]))
+                _, c, a = min(ranked, key=lambda x: self._order(s, (x[1], x[2])))
             key = (i, tuple(c["sqls"]))
             if key not in cache:
                 cache[key] = evaluate(sql, c, cost_fn)[2]
@@ -192,6 +210,18 @@ class BanditAgent:
         """Best predicted fix WITHOUT calling cost_fn (the point of learning)."""
         _, ranked = self.rank(masked_sql, stats, column_types)
         return ranked[0][1] if ranked else None
+
+
+    def choose_verified(self, masked_sql, stats, cost_fn, k=VERIFY_TOP_K, column_types=None):
+        """Rank all fixes, then SIMULATE only the top k and return the one with the best real
+        reward. Returns (candidate, cost_before, cost_after, reward, n_cost_fn_calls)."""
+        _, ranked = self.rank(masked_sql, stats, column_types)
+        if not ranked:
+            return None, None, None, None, 0
+        before = cost_fn(masked_sql, [])
+        tried = [(c, *evaluate(masked_sql, c, cost_fn, before)[1:]) for _, c, _ in ranked[:max(1, k)]]
+        best = max(tried, key=lambda t: (t[2], -write_width(t[0])))
+        return best[0], before, best[1], best[2], 1 + len(tried)
 
 
 # ------------------------------------------------------------
@@ -239,13 +269,17 @@ if __name__ == "__main__":
 
     print(f"\nHELD-OUT query shapes {sorted({v['shape'] for v in test})} - never seen in training")
     print(f"{'query':7} | {'RL pick (no simulation)':44} {'drop%':>6} {'pen':>5} | "
-          f"{'random':>6} {'pen':>5} | {'index-all':>9} {'pen':>5} | {'best%':>6}")
+          f"{'random':>6} {'pen':>5} | {'index-all':>9} {'pen':>5} | {'verify%':>7} | {'best%':>6}")
     totals = defaultdict(list)
+    n_calls = []
     for v in test:
         stats, f = fake_env.stats_for_agent(v["catalog"]), fake_env.make_cost_fn(v["catalog"])
         before = f(v["sql"], [])
         cands = cand_mod.candidates(v["sql"])
         rl = row(v, agent.choose(v["sql"], stats), before, f)
+        verified, _, _, _, calls = agent.choose_verified(v["sql"], stats, f)
+        rlv = row(v, verified, before, f)
+        n_calls.append(calls)
         rnd = [row(v, c, before, f) for c in cands]
         rnd = tuple(sum(x[i] for x in rnd) / len(rnd) for i in range(3))   # expected value of a random pick
         allx = row(v, index_every_filter_column(v["sql"]), before, f)
@@ -253,11 +287,16 @@ if __name__ == "__main__":
         pick = agent.choose(v["sql"], stats)
         label = pick["rule"] if pick["kind"] == "rewrite" else " + ".join(pick["sqls"])
         print(f"{v['id']:7} | {label[:44]:44} {rl[0]:6.1f} {rl[1]:5.2f} | {rnd[0]:6.1f} {rnd[1]:5.2f} | "
-              f"{allx[0]:9.1f} {allx[1]:5.2f} | {best[0]:6.1f}")
-        for name, r in (("RL", rl), ("random", rnd), ("index-all", allx), ("oracle", best)):
+              f"{allx[0]:9.1f} {allx[1]:5.2f} | {rlv[0]:7.1f} | {best[0]:6.1f}")
+        for name, r in (("RL", rl), (f"RL + top-{VERIFY_TOP_K} verify", rlv), ("random", rnd),
+                        ("index-all", allx), ("oracle", best)):
             totals[name].append(r)
     print("\nAVERAGE over held-out queries:")
-    print(f"  {'method':10} {'cost drop %':>12} {'write pen':>10} {'reward':>8}")
+    print(f"  {'method':18} {'cost drop %':>12} {'write pen':>10} {'reward':>8}")
     for name, rs in totals.items():
         avg = [sum(r[i] for r in rs) / len(rs) for i in range(3)]
-        print(f"  {name:10} {avg[0]:12.1f} {avg[1]:10.2f} {avg[2]:8.3f}")
+        print(f"  {name:18} {avg[0]:12.1f} {avg[1]:10.2f} {avg[2]:8.3f}")
+    cands_per_q = [len(cand_mod.candidates(v["sql"])) for v in test]
+    print(f"\ncost_fn calls per query: RL alone 0 | RL + top-{VERIFY_TOP_K} verify {max(n_calls)} "
+          f"(1 baseline + {VERIFY_TOP_K} fixes) | oracle 1 + all candidates = "
+          f"{min(cands_per_q) + 1}-{max(cands_per_q) + 1}")
