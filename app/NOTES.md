@@ -10,7 +10,8 @@ Everything below is OUR side of the contract. Items marked **LEAD** need the lea
 | `unsafe_rewrite` | `True` if any rewrite returned different rows than the original query |
 | `ai_inputs` | which optional inputs `ai/` really got: `{time_fn, stats, column_types}`, each `"used"`, `"not available yet"`, `"not supported by ai/ yet"`, `"dropped: failed the leak check"`, `"unavailable"` or `"failed: rewrites are unverified"` |
 | `deploy_scripts` | the un-masked fix for EACH recommendation, same order as `recommendations` (real values restored). **Approve step only.** `deploy_sql` is the first one |
-| `explanation_unmasked` | **LEAD: pending OK, not built yet.** Explanation with real names put back, for admin display only; produced AFTER the LLM call; never fed back into any prompt |
+| `explanation_unmasked` | the explanation with the admin's real names put back. Built from the FINISHED explanation (after the LLM call), so it never reaches a prompt, the audit log or `ai/`. Shown ONLY inside the Approve section, after the click |
+| `demo` | `True` only on results that Demo mode returned from the recording |
 
 Extra keys on each recommendation (set by the pipeline, only when it applies):
 `unsafe_rewrite: True` and `warning` on a rewrite that changes the result. Such a rewrite is
@@ -20,10 +21,9 @@ sorted below every safe fix, so it can never be the "best" one.
 1. **`llm.explain(masked_result, leak_check) -> dict`** (contract: `explain(masked_result) -> str`).
    Only `pipeline.py` calls it; `analyze()["explanation"]` is still a string. `leak_check(text)->bool`
    is passed in so `llm.py` never sees the private name mapping.
-2. **`cost_fn` only costs `CREATE INDEX ...`.** Any other action (e.g. `PARTITION ...`, several
-   statements) raises `ValueError`, which P3 turns into `rule_only`. v2 says `cost_fn` should also
-   pass the partition action to `sandbox.cost`; it is one regex (`SIMULATABLE_ACTION` in
-   `pipeline.py`) to allow it once Person 1's sandbox can cost partitions.
+2. **`cost_fn` costs one `CREATE INDEX ...` or one `PARTITION t BY RANGE (c) MONTHLY`** (`SIMULATABLE_ACTION`
+   in `pipeline.py`). Anything else (YEARLY, several statements, DROP ...) raises `ValueError`, which P3
+   turns into `rule_only`. For rewrites the real values are put back first (section 9).
 3. **`time_fn` returns `{"ms", "results_match"}`, NOT `{"ms", "rows", "checksum"}`.** The real run's
    rows and checksum are compared inside `pipeline.py` (against the original query) and never go to
    `ai/`. This means no value derived from real result rows reaches `ai/`, so there is nothing to
@@ -41,6 +41,10 @@ sorted below every safe fix, so it can never be the "best" one.
    crash, they are dropped and an audit event is written. If the real timing run fails, the
    pipeline calls `recommend()` again without `time_fn` (P3's code does not catch that error).
 7. **Strict privacy gate:** `PRIVACY_STRICT` (default `1`, below).
+8. **Un-masking is ours, in three marked places** (section 9). `ai/` only ever gets masked text; a rewrite is
+   verified on the sandbox with the real values restored just before the call.
+9. **Measured time is the headline** whenever a measured time exists; the planner estimate sits in a collapsed
+   expander and may disagree (amber note, not red). Without a measured time the page shows the estimate.
 
 ## 3. Audit log events (`app/audit_log.jsonl`, git-ignored, also in memory)
 `llm_call`, `warmup`, `analysis_blocked`, `analysis_warned`, `stats_dropped`, `stats_unavailable`,
@@ -93,8 +97,17 @@ Shown for the **top pick** (first by trust: measured, simulated, rule-only, unve
   become real when Persons 1 and 3 deliver. Use the sidebar sample (4 variants) to see every state.
 
 ## 8. Demo mode and sample data
-- The sidebar sample is OFF by default and can NEVER show while Demo mode is on. Demo mode itself is **not built
-  yet (Step 5)**: it only has to set `st.session_state["demo_mode"] = True` and the guard already works.
+- **Demo mode** (sidebar switch, sets `st.session_state["demo_mode"]`) answers from RECORDED real analyses:
+  `app/demo_results.json`, one per demo query, made by `python -m app.record_demo` (needs the database; Ollama is
+  not used, so the explanations are the template). In Demo mode no database, sandbox, Ollama call or Ollama
+  warm-up happens (`app/test_demo_mode.py` rigs all of them to explode). Pasted SQL and unmatched questions get a
+  plain message. A violet badge and a banner say "recorded results".
+- The recording in the repo was made with Person 3's real agent (`ai` branch) on the 1M-order dataset.
+  **Re-record whenever `ai/`, the sandbox or the dataset changes** (about 75 s).
+- The recording holds the demo queries' own literals in `deploy_scripts` / `explanation_unmasked` (demo data, not
+  private data). The Approve step works in Demo mode (it only shows text).
+- The sidebar sample switch ("every badge type", made-up numbers) is OFF by default, and is HIDDEN while Demo mode
+  is on: made-up numbers never show next to a demo.
 
 ## 9. Restoring real values (the `$1, $2` fix) - where it may and may not happen
 The masker turns every value into `$1, $2` and keeps value -> number privately (`mapping.query_params`).
@@ -124,7 +137,7 @@ functions first. **Person 1: please use a restricted role.**
 - It only builds text (`app/approve.py`). `app/test_approve.py` rigs the sandbox, every database
   connection and the decoder to explode if the page touches them.
 
-## 11. Tests (run from the project folder; none need a database or Ollama)
+## 11. Tests (run from the project folder; none need Ollama)
 ```
 .venv/Scripts/python -m app.test_privacy          # privacy + guard
 .venv/Scripts/python -m app.test_llm_http         # real Ollama call, against a fake server
@@ -134,9 +147,29 @@ functions first. **Person 1: please use a restricted role.**
 .venv/Scripts/python -m app.test_before_after     # charts, 50% target, measured-time headline, trade-off
 .venv/Scripts/python -m app.test_restore          # real values restored only for the sandbox + Approve (tripwire)
 .venv/Scripts/python -m app.test_approve          # the Approve step never executes anything
+.venv/Scripts/python -m app.test_demo_mode        # Demo mode: recorded answers, nothing live is touched
 ```
+(`test_restore` and `test_approve` use the real masker and read-only sandbox runs, so they need the Docker database.)
 
-## 12. Asks for other people
+## 12. Decisions we made (for the lead)
+- Real values come back only for the sandbox run and the Approve text (section 9). Text values are quoted with `'`
+  doubled; numbers stay bare (the type is read from the original SQL because the masker does not record it).
+- Approve only SHOWS a script (`BEGIN; ... ROLLBACK;` with real statements, "NOT EXECUTED"), plus copy and
+  download. It never runs anything. One script per recommendation (`deploy_scripts`); the page shows the top pick's.
+- A partition has no executable script (it is a multi-step migration): comments only.
+- Stats and column types are checked with their KEYS too, because `verify_no_leak` ignores JSON keys.
+- The planner and the stopwatch can disagree: in the recording q07's rewrite is 87% faster measured while the
+  planner cost says 23% worse. The page leads with the measured time and shows the estimate in a collapsed box
+  with an amber note (not a red WORSE).
+- The top-level numbers of the result (`cost_*`, `time_*_ms`, `improvement_pct`) describe `recommendations[0]`;
+  the page's top pick (best evidence tier) is not always that one, so read per-recommendation fields
+  (`improvement_pct`, `verified_by`) when you need the top pick's own numbers.
+
+## 13. Asks for other people
+- **Lead:** merge the `ai` branch into master (master still has the 3-argument stub `rl.recommend`), then re-run
+  `python -m app.record_demo` so the Demo mode recording matches what is merged.
+- **Person 1:** a larger dataset (5-10M orders) would make the measured gains of composite indexes clearer (q11
+  shows 51% planner vs about 21% measured at 1M).
 - **Person 3:** `ai/verify.py` must read `results_match` instead of `rows` / `checksum`
   (see section 2, item 3). Also: `stats` now arrives with `eq_sel` already filled in.
 - (4c) `table_stats` is now called with the SQL so Person 3 gets `range_sel`; `PARTITION ... MONTHLY` is passed to `cost`.
