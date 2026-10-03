@@ -1,7 +1,7 @@
 """Simulation sandbox: the ONLY module that runs SQL against the database.
 
 Owner: Person 1.
-STATUS: get_plan, cost = REAL.  Other functions are still STUBS (fake numbers).
+STATUS: get_plan, cost, index_size_bytes = REAL.  Other functions are still STUBS (fake numbers).
 Keep the signatures and return shapes (see CLAUDE.md "Shared interface contract").
 
 Self-test:  .venv/Scripts/python -m db.sandbox
@@ -84,8 +84,16 @@ def cost(sql, hypo_indexes=[]):
 
 
 def index_size_bytes(index_sql):
-    """HypoPG's estimated size of the index (storage impact)."""
-    return 22_000_000
+    """HypoPG's estimated size of the index on disk (storage impact), in bytes.
+    Like cost(), the index is only pretend and is wiped straight after."""
+    _check_index_sql(index_sql)
+    conn = _connection()
+    try:
+        conn.execute("SELECT hypopg_reset()")
+        oid = conn.execute("SELECT indexrelid FROM hypopg_create_index(%s)", (index_sql,)).fetchone()[0]
+        return int(conn.execute("SELECT hypopg_relation_size(%s)", (oid,)).fetchone()[0])
+    finally:
+        conn.execute("SELECT hypopg_reset()")
 
 
 def measure_write_latency(index_sql):
@@ -109,7 +117,7 @@ if __name__ == "__main__":
     fix = "CREATE INDEX ON orders (region_id, order_date)"
     print("plan root:", get_plan(q11)["Plan"]["Node Type"])
     print("q11 cost before/after:", cost(q11), cost(q11, [fix]))
-    print("index size:", index_size_bytes("CREATE INDEX ON orders (region_id)"))
+    print("index size (MB):", index_size_bytes(fix) / 1e6)
     print("write latency:", measure_write_latency("CREATE INDEX ON orders (region_id)"))
     print("timed run:", timed_run("SELECT 1"), timed_run("SELECT 1", ["x"]))
     print("slow queries:", slow_queries())
