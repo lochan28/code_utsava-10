@@ -67,11 +67,14 @@ Returns recommendations, best first. Contract keys: `kind`, `action`, `cost_befo
 | `novelty` | `seen query shape` or `unseen shape (lower confidence)` vs the agent's training |
 | `agent_score` | the agent's predicted reward before simulation |
 | rewrites only | `same_results`, `time_before_ms`, `time_after_ms`, `speedup`, `verify_note`, `rule_label` |
-| index / partition winner | `planner_gain_pct` (planner estimate), `measured_ms_before`, `measured_ms_after`, `measured_gain_pct` (median of 3 sandbox runs; `None` if not timed), `timing_note`; index fixes may also carry `write_latency` (`write_fn`) |
+| index / partition winner | `planner_gain_pct` (planner estimate), `measured_ms_before`, `measured_ms_after`, `measured_gain_pct` (median of 5 sandbox runs, `TIME_WINNER_RUNS`; `None` if not timed), `timing_note`, `combined` (True = partition + index together, `action` is `"PARTITION ...; CREATE INDEX ..."`); index fixes may also carry `write_latency` (`write_fn`) |
 | first item only | `why_not` (why the best alternative was rejected), `summary` (whole bundle in one sentence: **measured gain first, planner estimate second**, e.g. "59% faster in measured sandbox time (planner estimated 92%)"; without timing: "estimated by the planner (not timed)"), `rejected_fixes` (fixes dropped because the timed run returned different results) |
 
-Ranking and reward always use planner cost (`cost_fn`); measured numbers only change what is
-reported. The winning index/partition fix is timed only when `time_fn` accepts `actions` (below).
+The agent's ranking and reward always use planner cost (`cost_fn`); the planner shortlists.
+When `time_fn` accepts `actions` (below), every verified index/partition fix is then **timed**,
+plus partition + best index **combined** (costed and timed on the partitioned copy), and the
+fix with the best **measured** gain goes first. The combination is kept only if it wins.
+Why: the planner overestimates partition gains (trust score in `RESULTS.md`).
 
 `kind` is `index`, `partition`, `rewrite`, or `none` (masked SQL could not be parsed).
 How it works: the agent ranks all candidates (`ai/candidates.py`), then the top 3 are
@@ -111,8 +114,8 @@ time_fn(masked_sql) -> dict                                            # optiona
 #   otherwise time_fn(rewritten_sql) right after time_fn(original_sql).
 #   Without it, rewrites are rule_only (planner cost is unreliable for rewrites).
 #   ACTIONS (needed to time the winning index/partition fix): if time_fn has an `actions`
-#   parameter, ai/ calls time_fn(masked_sql, actions=[...masked fix...]) 3 times with and
-#   3 times without the fix -> Person 1 checked_run(unmask(sql), [unmask(a) for a in actions])
+#   parameter, ai/ calls time_fn(masked_sql, actions=[...masked fix...]) 5 times per fix
+#   (TIME_WINNER_RUNS) and 5 times without -> Person 1 checked_run(unmask(sql), [unmask(a) for a in actions])
 #   on the sandbox copy. If the results differ, the fix is REJECTED. Without `actions`, the
 #   winner stays verified_by="hypopg_cost" and the summary says "estimated by the planner (not timed)".
 
