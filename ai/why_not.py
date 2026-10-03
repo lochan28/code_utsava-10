@@ -61,7 +61,7 @@ def why_not(c, info, stats, measured=None, chosen=None, pairs=()):
     if rows and rows < SMALL_TABLE_ROWS:
         return (f"Index on {table}({', '.join(cols)}) rejected: the table has only about {rows:,.0f} rows, "
                 f"so scanning it is already cheap{sim}.")
-    if "eq_filter" in roles or "or_filter" in roles:
+    if len(cols) == 1 and ("eq_filter" in roles or "or_filter" in roles):   # distinct-values reason: 1 column only
         sel = stats["eq_sel"].get(key)
         if sel is not None and sel >= BROAD_SELECTIVITY:
             return (f"Index on {table}({col}) rejected: {col} has only about {round(1 / sel):,} distinct values "

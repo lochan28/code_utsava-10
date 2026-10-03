@@ -75,10 +75,14 @@ really simulated with `cost_fn` (4 calls per query) and sorted by measured rewar
 Fixes measured as no better are dropped; unsimulated ones stay, flagged `rule_only`.
 
 **Trained agent** — `ai/rl_agent.json` (structural features only, no names): trained on
-**real HypoPG planner costs** for 8 of the 11 slow queries (q01, q02, q04, q05, q07,
-q08, q09, q10), partitioning not offered (the sandbox can't simulate it). q03, q06,
-q11 were held out, so they correctly show `unseen shape`. Missing file → an untrained
-agent (everything `unseen`; the top-3 simulation still picks).
+**real planner costs** (Person 1 `sandbox.cost()`, HypoPG + simulated `PARTITION ... MONTHLY`)
+for the **100 training queries of Person 1's workload generator** (`db/workload.py`,
+`generate(split="train")`, seed 7: templates t01-t08, 12-13 queries each), all masked, stats
+from `sandbox.table_stats()` (masked). 3000 episodes, seed 7, 277 distinct simulations.
+A partition the sandbox refuses (non-date column) counted as no gain during training.
+The 100 test queries (templates t09-t12) were held out. 7 query shapes were seen in
+training; held-out t09/t10/t12 correctly show `unseen shape`, t11 matches a seen shape.
+Missing file → an untrained agent (everything `unseen`; the top-3 simulation still picks).
 
 ## What Person 1 / 2 / 4 must pass in
 

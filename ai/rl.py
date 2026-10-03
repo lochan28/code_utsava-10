@@ -365,9 +365,19 @@ def bundle_summary(recs):
     parts = []
     if index_fix:
         cols = index_fix["write_penalty"] / WRITE_PENALTY_PER_COL
-        parts.append(f"{_fix_phrase(index_fix)} ({index_fix['improvement_pct']:.0f}% lower estimated cost "
-                     f"in the HypoPG sandbox, +{cols:.0f} index column{'s' if cols != 1 else ''} to maintain "
-                     f"on writes, write penalty {index_fix['write_penalty']:.2f})")
+        wl = index_fix.get("write_latency") or {}
+        if index_fix["kind"] == "partition":      # no index involved: costed on a partitioned copy
+            parts.append(f"{_fix_phrase(index_fix)} ({index_fix['improvement_pct']:.0f}% lower estimated cost "
+                         f"on a partitioned sandbox copy; write cost not measured)")
+        else:
+            if wl.get("source") == "measured":
+                writes = (f"+{wl['delta_ms_per_row']:.3g} ms per inserted row, measured on the sandbox copy "
+                          f"({wl['pct']:+.0f}% insert time)")
+            else:
+                writes = (f"+{cols:.0f} index column{'s' if cols != 1 else ''} to maintain on writes "
+                          f"(estimated, write penalty {index_fix['write_penalty']:.2f})")
+            parts.append(f"{_fix_phrase(index_fix)} ({index_fix['improvement_pct']:.0f}% lower estimated cost "
+                         f"in the HypoPG sandbox, {writes})")
     if rewrite_fix:
         parts.append(f"{_fix_phrase(rewrite_fix)} ({rewrite_fix['speedup']:.1f}x faster measured, same results)")
     for r in suggested:
@@ -381,8 +391,31 @@ def bundle_summary(recs):
     return text + "." + note + " Zero raw data exposed to the AI (masked metadata only)."
 
 
+def _attach_write_latency(recs, write_fn):
+    """Measured write cost for the FINAL verified index fix only (one write_fn call per
+    index). Additive: sets rec["write_latency"]; never changes reward or ranking.
+    write_fn(masked_index_sql) -> {"before_ms", "after_ms", "delta_ms"} per inserted row
+    (signature of Person 1's sandbox.measure_write_latency, un-masked by the pipeline)."""
+    fix = next((r for r in recs if r["kind"] == "index" and r["verified_by"] == "hypopg_cost"
+                and r["improvement_pct"] > 0), None)
+    if fix is None:
+        return
+    if write_fn is None:
+        fix["write_latency"] = {"source": "estimated", "note": "width-based write penalty, not measured"}
+        return
+    try:
+        runs = [write_fn(sql) for sql in fix["action"].split("; ")]
+    except Exception as e:                       # measurement failed: say so, keep the estimate
+        fix["write_latency"] = {"source": "estimated", "note": f"measurement failed: {type(e).__name__}"}
+        return
+    before = runs[0]["before_ms"]
+    delta = sum(r["delta_ms"] for r in runs)
+    fix["write_latency"] = {"source": "measured", "before_ms_per_row": before, "delta_ms_per_row": round(delta, 5),
+                            "pct": round(100 * delta / before, 1) if before else None, "indexes": len(runs)}
+
+
 def recommend(masked_sql, masked_plan, cost_fn, stats=None, time_fn=None, agent=None,
-              column_types=None, k=VERIFY_TOP_K):
+              column_types=None, k=VERIFY_TOP_K, write_fn=None):
     """Ranked, verified recommendations for one masked query (CLAUDE.md contract).
 
     Contract keys per item: kind, action, cost_before, cost_after, reason.
@@ -391,7 +424,10 @@ def recommend(masked_sql, masked_plan, cost_fn, stats=None, time_fn=None, agent=
     rewrites same_results / time_before_ms / time_after_ms / speedup / verify_note.
     The first item also carries why_not (one sentence on the best REJECTED option) and
     summary (the whole recommended bundle in one sentence, verified numbers only).
-    Optional: stats (masked table stats), time_fn (see ai/verify.py), agent."""
+    Optional: stats (masked table stats), time_fn (see ai/verify.py), agent, and
+    write_fn (Person 1's measure_write_latency, un-masked by the pipeline): if given, the
+    final verified index fix gets a MEASURED write_latency used in the summary; without
+    it the summary keeps the width-based estimate, labelled "estimated"."""
     agent = agent or load_agent()
     stats = normalize_stats(stats or stats_from_plan(masked_plan))
     try:
@@ -468,6 +504,7 @@ def recommend(masked_sql, masked_plan, cost_fn, stats=None, time_fn=None, agent=
         _, c, measured = rejected[0]
     else:
         c, measured = ranked[k][1] if len(ranked) > k else None, None
+    _attach_write_latency(recs, write_fn)
     recs[0]["summary"] = bundle_summary(recs)
     if c is not None:
         chosen = None if recs[0]["verified_by"] == "rule_only" else {"drop": chosen_drop, "label": recs[0]["action"]}
