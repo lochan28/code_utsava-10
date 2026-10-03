@@ -6,6 +6,7 @@ on the left (db/, privacy/), only masked data crosses to ai/ and app/llm.py.
 
 Self-test:  .venv/Scripts/python pipeline.py
 """
+import hashlib
 import json
 import math
 import re
@@ -87,10 +88,52 @@ def _read_only_sql(text):
         raise ValueError(f"Could not parse the pasted SQL: {e}") from None
     if len(stmts) != 1:
         raise ValueError("Paste exactly one SQL statement.")
-    if not isinstance(stmts[0], exp.Query) or stmts[0].find(
-            exp.Insert, exp.Update, exp.Delete, exp.Drop, exp.Create, exp.Alter):
+    tree = stmts[0]
+    if not isinstance(tree, exp.Query) or tree.find(
+            exp.Insert, exp.Update, exp.Delete, exp.Drop, exp.Create, exp.Alter,
+            exp.Into,   # SELECT ... INTO new_table  (creates a table)
+            exp.Lock):  # SELECT ... FOR UPDATE      (takes row locks)
         raise ValueError("Only read-only SELECT queries can be analysed.")
-    return stmts[0].sql(dialect="postgres")
+    # sqlglot only turns functions it does not know into Anonymous. Those include
+    # pg_sleep, pg_read_file, nextval, dblink ... so refuse them all.
+    unknown = sorted({f.name for f in tree.find_all(exp.Anonymous)})
+    if unknown:
+        raise ValueError(f"Function(s) not allowed in pasted SQL: {', '.join(unknown)}")
+    return tree.sql(dialect="postgres")
+
+
+def _raw_literals(sql):
+    """Real values inside raw SQL (text values, long numbers), lower-cased.
+
+    Used ONLY as a tripwire: after masking, none of these may appear in anything
+    that goes to the AI. It does not replace the masker, it double-checks it.
+    Short values are skipped (a 1-2 character match would fire on ordinary words).
+    """
+    try:
+        tree = sqlglot.parse_one(sql, read="postgres")
+    except sqlglot.errors.SqlglotError:
+        return []
+    found = set()
+    for lit in (tree.find_all(exp.Literal) if tree else []):
+        v = str(lit.this).lower()
+        if len(v) >= (3 if lit.is_string else 5):
+            found.add(v)
+    return sorted(found)
+
+
+class PrivacyError(ValueError):
+    """Masked data failed the leak check. Raised BEFORE anything reaches the AI."""
+
+
+def cache_key(match, masked_sql):
+    """Key for caching a finished analysis (used in Step 5).
+
+    Built ONLY from fixed ids and MASKED text. Never from the admin's question or
+    pasted SQL, which can hold real names, emails or amounts.
+    """
+    if match["query_id"] == "adhoc":
+        return "adhoc:" + hashlib.sha256(masked_sql.encode()).hexdigest()[:16]
+    return "known:" + str(match["query_id"])
 
 
 def match_question(question):
@@ -135,13 +178,34 @@ def match_question(question):
 
 
 def analyze(question):
+    # The raw question and any pasted SQL are UNTRUSTED and may hold real names,
+    # emails or amounts. The raw question was used above for matching ONLY. From
+    # here on, raw text is used for (a) the admin-only display and (b) the masker.
+    # It must never reach a prompt, the audit log or a cache key - use masked_sql.
     q, match = match_question(question)
     mapping = mask.build_mapping()                      # private, stays here
+    raw_literals = _raw_literals(q["sql"])
 
+    def is_clean(text):
+        """True if text holds no real name (masker's check) and none of the real
+        values from the raw SQL (our own tripwire). Handed to llm.py so it never
+        sees the mapping."""
+        return mask.verify_no_leak(text, mapping) and not any(v in text.lower() for v in raw_literals)
+
+    # TODO(Person 1, db/sandbox.py): q["sql"] may have been PASTED by the admin, so it
+    # is untrusted. get_plan() and cost() must use plain EXPLAIN (never EXPLAIN ANALYZE)
+    # with a statement_timeout, inside a read-only transaction. timed_run() is the only
+    # function that really executes SQL: it must run only on the sandbox schema, in a
+    # read-only transaction, with a statement_timeout. Also: the DB user "tuner" is a
+    # SUPERUSER today; use a restricted read-only role for anything that runs pasted SQL.
     # ---- real side: only db/ and privacy/ see real SQL ----
     masked_sql = mask.mask_query(q["sql"], mapping)
     masked_plan = mask.mask_plan(sandbox.get_plan(q["sql"]), mapping)
     bitmask = mask.column_bitmask(q["sql"], mapping)
+
+    # Gate: if masking left anything real behind, stop BEFORE the AI sees it.
+    if not is_clean(json.dumps([masked_sql, masked_plan, bitmask])):
+        raise PrivacyError("Masking failed the privacy check, so nothing was sent to the AI.")
 
     def cost_fn(m_sql, m_indexes):
         """The AI's only window into the DB: masked SQL in, a number out."""
@@ -153,10 +217,11 @@ def analyze(question):
     best = recs[0]
     masked_result = {"masked_query": masked_sql, "masked_plan": masked_plan,
                      "bitmask": bitmask, "bottleneck": bottleneck, "recommendations": recs}
-    explanation = llm.explain(masked_result)
+    llm_out = llm.explain(masked_result, is_clean)
+    explanation = llm_out["text"]
 
     # Everything the AI saw or produced must be free of real names/values.
-    leak_check = mask.verify_no_leak(json.dumps(masked_result) + explanation, mapping)
+    leak_check = is_clean(json.dumps(masked_result) + explanation)
 
     # ---- back on the real side: un-mask only for the admin's screen ----
     deploy_sql = mask.unmask(best["action"], mapping)
@@ -182,6 +247,9 @@ def analyze(question):
         # Extra key (not in the original contract; adding it breaks nobody):
         # how the question was matched, for the "matched X, 82% sure" line.
         "match": match,
+        # Extra key: how the explanation was made + its leak-check results, for the UI.
+        "llm": {k: llm_out[k] for k in ("source", "prompt_leak_ok", "reply_leak_ok",
+                                        "latency_ms", "fallback_reason")},
     }
 
 
