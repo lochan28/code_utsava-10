@@ -3,7 +3,7 @@
 Owner: Person 1.
 STATUS: get_plan, cost, index_size_bytes (real build), timed_run, checked_run, table_stats,
         measure_write_latency = REAL.
-        slow_queries is still a STUB (fake numbers).
+        slow_queries, run_workload = REAL. (No stubs left.)
 Keep the signatures and return shapes (see CLAUDE.md "Shared interface contract").
 
 Self-test:  .venv/Scripts/python -m db.sandbox
@@ -29,6 +29,9 @@ WRITE_TEST_ROWS = 10000    # rows inserted per write-latency batch. More = stead
                            # per-row average but slower; 5000-50000 is sensible.
 WRITE_REPEATS = 9          # write batches timed in each round (after one
                            # warm-up each); the median is used. 3-10 is sensible.
+WORKLOAD_REPEATS = 3       # run_workload() runs each known slow query this many
+                           # times, so slow_queries() has real history to show.
+                           # Higher = more realistic call counts, slower (q04 ~2.5 s/run).
 
 # ============================================================
 # FIXED SETTINGS - must match docker-compose.yml
@@ -180,9 +183,12 @@ def _check_select(sql):
 
 
 def get_plan(sql):
-    """EXPLAIN (FORMAT JSON) plan of sql, without running it."""
+    """EXPLAIN (FORMAT JSON) plan of sql, without running it.
+    Also accepts the $1, $2 placeholders that pg_stat_statements stores
+    instead of literal values (uses Postgres 16's EXPLAIN GENERIC_PLAN)."""
     _check_select(sql)
-    return _connection().execute("EXPLAIN (FORMAT JSON) " + sql).fetchone()[0][0]
+    options = "GENERIC_PLAN, FORMAT JSON" if re.search(r"\$\d+", sql) else "FORMAT JSON"
+    return _connection().execute(f"EXPLAIN ({options}) " + sql).fetchone()[0][0]
 
 
 def _split_actions(actions):
@@ -354,7 +360,7 @@ def _sandbox_run(sql, index_sqls, with_checksum):
             # Order-independent fingerprint of ALL result rows (agreed with Person 3,
             # see ai/verify.py): hash each row, sort the hashes, hash them together.
             rows, checksum = conn.execute(
-                "SELECT count(*), md5(coalesce(string_agg(md5(t::text), '' "
+                "/* sandbox */ SELECT count(*), md5(coalesce(string_agg(md5(t::text), '' "
                 f"ORDER BY md5(t::text)), '')) FROM ({sql}) AS t").fetchone()
             result.update(rows=int(rows), checksum=checksum)
         return result
@@ -455,9 +461,58 @@ def table_stats(sql=None):
     return {"rows": rows, "eq_sel": eq_sel, "range_sel": range_sel, "existing_indexes": existing}
 
 
+def _known_query_ids():
+    """{Postgres query identifier: our id like "q11"} for db/queries.py.
+    Postgres gives every query shape an identifier; EXPLAIN VERBOSE reveals it."""
+    from db import queries
+    ids = {}
+    for q in queries.QUERIES:
+        plan = _connection().execute("EXPLAIN (VERBOSE, FORMAT JSON) " + q["sql"]).fetchone()[0][0]
+        ids[plan["Query Identifier"]] = q
+    return ids
+
+
+def run_workload(repeats=None, reset=False):
+    """Really run every known slow query `repeats` times on the live tables,
+    READ-ONLY, like a busy shop would, so slow_queries() has history to show.
+    reset=True first clears ALL recorded statistics (shared by the whole team -
+    use only when preparing a clean demo)."""
+    from db import queries
+    conn = _connection()
+    if reset:
+        conn.execute("SELECT pg_stat_statements_reset()")
+    for _ in range(repeats or WORKLOAD_REPEATS):
+        for q in queries.QUERIES:
+            conn.execute(q["sql"]).fetchall()
+
+
 def slow_queries(limit=10):
-    """Slowest statements from pg_stat_statements."""
-    return [{"query_id": "q11", "sql": "SELECT ...", "calls": 40, "mean_ms": 27.0}][:limit]
+    """Slowest statements actually run on the live tables, from
+    pg_stat_statements: [{"query_id", "sql", "calls", "mean_ms"}], slowest first.
+
+    Only real top-level SELECTs on our tables count; our own tooling (EXPLAIN
+    calls, sandbox runs tagged /* sandbox */, catalog lookups) is left out.
+    Known queries get their id ("q04") and their full SQL; anything else gets
+    "pg_<identifier>" and the recorded text, with $1, $2 in place of values -
+    get_plan() and cost() accept that form."""
+    known = _known_query_ids()
+    rows = _connection().execute(r"""
+        SELECT queryid, query, calls, mean_exec_time FROM pg_stat_statements
+        WHERE toplevel
+          AND dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
+          AND query !~ '^\s*/\* sandbox \*/'
+          AND query !~ 'md5\(t::text\)'            -- fingerprint runs from before the tag
+          AND query ~* '^\s*(select|with)\M'
+          AND query ~* '\m(orders|customers|products|regions)\M'
+          AND query !~* '(pg_|information_schema|hypopg)'
+        ORDER BY mean_exec_time DESC LIMIT %s""", (limit,)).fetchall()
+    out = []
+    for queryid, text, calls, mean_ms in rows:
+        q = known.get(queryid)
+        out.append({"query_id": q["id"] if q else f"pg_{queryid}",
+                    "sql": q["sql"] if q else text,
+                    "calls": int(calls), "mean_ms": round(mean_ms, 2)})
+    return out
 
 
 if __name__ == "__main__":
