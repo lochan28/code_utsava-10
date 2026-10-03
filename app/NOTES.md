@@ -9,6 +9,7 @@ Everything below is OUR side of the contract. Items marked **LEAD** need the lea
 | `llm` | how the explanation was made: `{source, prompt_leak_ok, reply_leak_ok, latency_ms, fallback_reason}` |
 | `unsafe_rewrite` | `True` if any rewrite returned different rows than the original query |
 | `ai_inputs` | which optional inputs `ai/` really got: `{time_fn, stats, column_types}`, each `"used"`, `"not available yet"`, `"not supported by ai/ yet"`, `"dropped: failed the leak check"`, `"unavailable"` or `"failed: rewrites are unverified"` |
+| `deploy_scripts` | the un-masked fix for EACH recommendation, same order as `recommendations` (real values restored). **Approve step only.** `deploy_sql` is the first one |
 | `explanation_unmasked` | **LEAD: pending OK, not built yet.** Explanation with real names put back, for admin display only; produced AFTER the LLM call; never fed back into any prompt |
 
 Extra keys on each recommendation (set by the pipeline, only when it applies):
@@ -84,6 +85,10 @@ Shown for the **top pick** (first by trust: measured, simulated, rule-only, unve
 - PS target: improvement strictly **more than 50%** (`tradeoff.TARGET_PCT`): green check if met, amber if not, red
   "WORSE" if the number is negative. Cost units and milliseconds are always on separate charts.
 - If every fix is unsafe, only a warning is shown: no numbers, no charts, no green.
+- When a MEASURED time exists it is the headline (chart + the 50% target check). The planner estimate
+  moves into a collapsed expander "Planner estimate (can disagree with measured time)". If the two point
+  in opposite directions the estimate gets a neutral amber note, not a red WORSE. With no measured time
+  the page is as before (cost estimate only).
 - **Everything on the stubs is fake** (cost 19437 -> 812, 27 -> 3 ms, 0.002 ms, 22,000,000 bytes). The numbers
   become real when Persons 1 and 3 deliver. Use the sidebar sample (4 variants) to see every state.
 
@@ -91,17 +96,47 @@ Shown for the **top pick** (first by trust: measured, simulated, rule-only, unve
 - The sidebar sample is OFF by default and can NEVER show while Demo mode is on. Demo mode itself is **not built
   yet (Step 5)**: it only has to set `st.session_state["demo_mode"] = True` and the guard already works.
 
-## 9. Tests (run from the project folder; none need a database or Ollama)
+## 9. Restoring real values (the `$1, $2` fix) - where it may and may not happen
+The masker turns every value into `$1, $2` and keeps value -> number privately (`mapping.query_params`).
+`pipeline._restorer` puts the real values back (text is quoted with `'` doubled, so a hostile value
+cannot end its own quotes; numbers stay bare). It is used in exactly THREE places, each marked
+`RESTORE POINT` in `pipeline.py`:
+1. `make_cost_fn`: right before `sandbox.cost` (plain `EXPLAIN`, no execution);
+2. `make_time_fn`: right before `sandbox.checked_run` (really runs the SQL on the sandbox copy);
+3. the Approve scripts (`deploy_scripts` / `deploy_sql`), built AFTER the AI and the LLM are finished.
+The restored text never goes into a prompt, the audit log, a cache key, `ai/`, or the result dict
+(apart from `deploy_scripts` / `deploy_sql`). `app/test_restore.py` has a tripwire for this, and
+proves it works: moving the restore before the AI or LLM call turns it red.
+What the sandbox enforces today (read from `db/sandbox.py`): `cost()` / `get_plan()` use a READ-ONLY
+connection with a 30 s timeout and plain `EXPLAIN`. `timed_run()` / `checked_run()` run the query
+(`EXPLAIN ANALYZE`) with a 30 s timeout, `search_path = sandbox`, `SET transaction_read_only = on`
+and a rollback at the end. Not airtight: the user is a superuser and a `SELECT ... INTO` still ran
+inside the read-only run (rolled back). Our SQL guard in `pipeline.py` rejects `INTO` and unknown
+functions first. **Person 1: please use a restricted role.**
+
+## 10. The Approve step (the only place un-masked SQL appears)
+- A button per analysis. Before the click the un-masked SQL is not on the page at all.
+- After the click: a warning "NOT EXECUTED, review before running", the script in a code block (it has
+  a copy button) and a "Download as .sql" button. The script is `BEGIN; ... ROLLBACK;`, so running it
+  as it stands keeps nothing; the admin changes `ROLLBACK` to `COMMIT` only after reviewing.
+- It is the script of the TOP PICK (not always the first fix listed), never of an unsafe fix. A
+  partition has no executable script (it is a multi-step migration): the script is comments only.
+- It only builds text (`app/approve.py`). `app/test_approve.py` rigs the sandbox, every database
+  connection and the decoder to explode if the page touches them.
+
+## 11. Tests (run from the project folder; none need a database or Ollama)
 ```
 .venv/Scripts/python -m app.test_privacy          # privacy + guard
 .venv/Scripts/python -m app.test_llm_http         # real Ollama call, against a fake server
 .venv/Scripts/python -m app.test_dashboard        # the page (headless)
 .venv/Scripts/python -m app.test_pipeline_hooks   # cost_fn, time_fn, stats, column_types
 .venv/Scripts/python -m app.test_recommendations  # badges, sorting, bottleneck card, sample / demo mode
-.venv/Scripts/python -m app.test_before_after     # charts, 50% target, write / storage, trade-off
+.venv/Scripts/python -m app.test_before_after     # charts, 50% target, measured-time headline, trade-off
+.venv/Scripts/python -m app.test_restore          # real values restored only for the sandbox + Approve (tripwire)
+.venv/Scripts/python -m app.test_approve          # the Approve step never executes anything
 ```
 
-## 10. Asks for other people
+## 12. Asks for other people
 - **Person 3:** `ai/verify.py` must read `results_match` instead of `rows` / `checksum`
   (see section 2, item 3). Also: `stats` now arrives with `eq_sel` already filled in.
 - (4c) `table_stats` is now called with the SQL so Person 3 gets `range_sel`; `PARTITION ... MONTHLY` is passed to `cost`.

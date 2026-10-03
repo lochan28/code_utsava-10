@@ -14,7 +14,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # so "import pipeline" works
 import pipeline  # noqa: E402
-from app import charts, llm, sample_data, tradeoff  # noqa: E402
+from app import approve, charts, llm, sample_data, tradeoff  # noqa: E402
 from app.ui_helpers import (  # noqa: E402
     ai_inputs_line, bottleneck_items, bottleneck_node_id, confidence_counts, confidence_strip,
     evidence_items, match_line, md_safe, novelty_badge, plan_tree_text, sort_recommendations,
@@ -267,9 +267,37 @@ def render_before_after(r):
 
 
 # ------------------------------------------------------------------
+# The Approve step: the ONLY place the un-masked SQL appears
+# ------------------------------------------------------------------
+def render_approve(r, key):
+    """A button that SHOWS the script for the top pick. It never runs anything: no database
+    call, no sandbox call, no decoder call. Before the click the un-masked SQL is not on the
+    page at all; after it, it appears only inside the script below."""
+    st.markdown("#### Approve")
+    top = tradeoff.top_recommendation(r.get("recommendations"))
+    if top is None:
+        st.caption("No safe fix to approve.")
+        return
+    sql = approve.sql_for(r, top)                  # text only; nothing is rendered from it yet
+    if sql is None:
+        st.caption("No script is available for this fix.")
+        return
+    st.caption("Approving only SHOWS the script, for you to review. It does not run anything.")
+    if st.button("Approve and show the script", key=f"approve_{key}", type="primary"):
+        st.session_state.approved.add(key)
+    if key in st.session_state.approved:
+        st.warning("NOT EXECUTED, review before running. Nothing has been applied to your database.",
+                   icon=":material/gpp_maybe:")
+        script = approve.build_script(top.get("kind"), sql, verified_badge(top)[0])
+        st.code(script, language="sql")            # has its own copy button
+        st.download_button("Download as .sql", data=script, file_name="approved_fix.sql",
+                           mime="text/plain", key=f"download_{key}")
+
+
+# ------------------------------------------------------------------
 # One analysis, shown inside an assistant chat message
 # ------------------------------------------------------------------
-def render_result(r):
+def render_result(r, key=None, approvable=False):
     if r.get("match"):
         st.caption(match_line(r["match"]))
 
@@ -290,15 +318,19 @@ def render_result(r):
     render_recommendations(r.get("recommendations"), r.get("ai_inputs"))
     render_before_after(r)
 
-    # The un-masked deploy_sql is deliberately NOT shown here: it belongs to the Approve step (4d).
+    # Un-masked SQL is deliberately NOT shown here: only render_approve may show it, after a click.
     if r.get("explanation"):
         st.markdown("#### Explanation")
         st.markdown(md_safe(r["explanation"]))
+    if approvable:
+        render_approve(r, key)
 
 
 # ------------------------------------------------------------------
 # Chat
 # ------------------------------------------------------------------
+if "approved" not in st.session_state:
+    st.session_state.approved = set()     # which analyses the admin has approved (only decides what to SHOW)
 if "history" not in st.session_state:
     st.session_state.history = []     # [{"question", "result" or None, "error" or None}]
 
@@ -335,11 +367,11 @@ if st.session_state.get("show_sample") and not demo_mode:      # the guard: chec
                    icon=":material/science:")
         render_result(sample_data.demo_result(variant))
 
-for entry in st.session_state.history:
+for position, entry in enumerate(st.session_state.history):
     with st.chat_message("user"):
         st.text(entry["question"])      # the admin's own words: shown only to the admin
     with st.chat_message("assistant"):
         if entry["error"]:
             st.error(entry["error"])
         else:
-            render_result(entry["result"])
+            render_result(entry["result"], key=position, approvable=True)

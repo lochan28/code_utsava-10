@@ -452,9 +452,12 @@ def analyze(question):
                   and mask.verify_no_leak(explanation, mapping, free_text=True))
 
     # ---- back on the real side: un-mask only for the admin's screen ----
-    # RESTORE POINT 3 of 3 (the Approve script, for the admin's eyes only). This runs AFTER the
-    # AI and the LLM are finished, and the text goes only into deploy_sql.
-    deploy_sql = restore(mask.unmask(best.get("action") or "", mapping))
+    # RESTORE POINT 3 of 3 (the Approve scripts, for the admin's eyes only). This runs AFTER the
+    # AI and the LLM are finished, and the text goes only into deploy_scripts / deploy_sql. One
+    # script per recommendation, in the same order, so the page can approve ITS top pick.
+    deploy_scripts = [restore(mask.unmask(rec.get("action") or "", mapping)) if isinstance(rec, dict) else ""
+                      for rec in recs]
+    deploy_sql = deploy_scripts[0] if deploy_scripts else ""
     measure = _single_create_index(best, deploy_sql)
     t_before = _measured("time_before", lambda: sandbox.timed_run(q["sql"]), measure, match)
     t_after = _measured("time_after", lambda: sandbox.timed_run(q["sql"], [deploy_sql]), measure, match)
@@ -478,6 +481,9 @@ def analyze(question):
         "storage_bytes": storage,
         "explanation": explanation,
         "deploy_sql": deploy_sql,
+        # Extra key: the un-masked fix for EACH recommendation (same order as "recommendations"),
+        # for the Approve step only. Real values: nothing but the Approve step may show them.
+        "deploy_scripts": deploy_scripts,
         "leak_check": leak_check,
         # Extra key (not in the original contract; adding it breaks nobody):
         # how the question was matched, for the "matched X, 82% sure" line.

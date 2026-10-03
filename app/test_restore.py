@@ -134,7 +134,9 @@ def run_tripwire(module):
             stack.enter_context(patched(obj, name, value))
         r = module.analyze(SQL_B)
         audit = json.dumps(llm.get_audit_log(), default=str)
-    result_without_script = json.dumps({k: v for k, v in r.items() if k != "deploy_sql"}, default=str)
+    # deploy_sql / deploy_scripts ARE the Approve text, the one place real values may live
+    result_without_script = json.dumps({k: v for k, v in r.items() if k not in ("deploy_sql", "deploy_scripts")},
+                                       default=str)
     return to_ai, sandbox_saw, result_without_script, audit, r["deploy_sql"]
 
 
