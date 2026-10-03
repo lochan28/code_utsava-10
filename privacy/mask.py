@@ -54,12 +54,15 @@ class Mapping:
 
 def _secret_key():
     """Load the team's one shared secret key. Never creates a new one: a new key
-    would silently change every code, so a missing key is an error."""
+    would silently change every code, so a missing or empty key is an error."""
     if not KEY_FILE.exists():
         raise FileNotFoundError(
             f"Secret key not found at {KEY_FILE}. Ask the lead - do NOT create a new "
             "one, it would change every masked name.")
-    return bytes.fromhex(KEY_FILE.read_text().strip())
+    text = KEY_FILE.read_text().strip()
+    if not text:      # an empty key would still "work" but give different codes
+        raise ValueError(f"Secret key file {KEY_FILE} is empty. Ask the lead to restore it.")
+    return bytes.fromhex(text)
 
 
 def _codes(names, prefix, key):
