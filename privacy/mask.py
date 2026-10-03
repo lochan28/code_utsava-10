@@ -4,7 +4,7 @@ Owner: Person 2.  STATUS: all functions real; self-test proves 11/11 queries mas
 Keep the signatures and return shapes (see CLAUDE.md "Shared interface contract").
 
 How names are hidden: each table/column name is run through HMAC-SHA256 with
-a SECRET KEY (privacy/.secret_key, never committed). Same key -> same codes
+a SECRET KEY (C:\\Code Utsav\\.secret_key, never committed). Same key -> same codes
 every run. Without the key nobody can rebuild the codes by hashing "orders".
 
 Self-test:  .venv/Scripts/python -m privacy.mask
@@ -13,7 +13,6 @@ import hashlib
 import hmac
 import json
 import re
-import secrets
 from pathlib import Path
 
 import psycopg
@@ -33,7 +32,9 @@ HASH_LEN = 3   # Hex characters per code (t_7c2). 3 = short and readable for
 # ============================================================
 DSN = "postgresql://tuner:tuner@localhost:5432/sales"
 SCHEMA = "public"
-KEY_FILE = Path(__file__).with_name(".secret_key")   # changing/deleting it changes every code
+# One key for the whole team, in the lead's folder (shared by all worktrees on
+# the host). Changing or deleting it changes every code.
+KEY_FILE = Path(r"C:\Code Utsav\.secret_key")
 
 
 class Mapping:
@@ -50,9 +51,12 @@ class Mapping:
 
 
 def _secret_key():
-    """Load the secret key, creating a random one the first time."""
+    """Load the team's one shared secret key. Never creates a new one: a new key
+    would silently change every code, so a missing key is an error."""
     if not KEY_FILE.exists():
-        KEY_FILE.write_text(secrets.token_hex(32))
+        raise FileNotFoundError(
+            f"Secret key not found at {KEY_FILE}. Ask the lead - do NOT create a new "
+            "one, it would change every masked name.")
     return bytes.fromhex(KEY_FILE.read_text().strip())
 
 
