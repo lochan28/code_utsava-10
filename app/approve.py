@@ -32,10 +32,15 @@ def _body(kind, sql):
         return ["-- A REPLACEMENT QUERY for your application. It reads data, it does not change it.",
                 sql.strip().rstrip(";") + ";"]
     if kind == "partition" and sql:
-        return ["-- Partitioning is a multi-step migration (create the partitioned table, copy the data,",
-                "-- swap the names), not one statement, so no script is generated for it.",
-                f"-- Recommended: {sql.strip()}",
-                "-- Plan it with your DBA."]
+        partition = [s for s in statements if not _CREATE_INDEX.match(s)]
+        indexes = [s + ";" for s in statements if _CREATE_INDEX.match(s)]    # a combined fix: PARTITION ...; CREATE INDEX ...
+        lines = ["-- Partitioning is a multi-step migration (create the partitioned table, copy the data,",
+                 "-- swap the names), not one statement, so no script is generated for it.",
+                 f"-- Recommended: {'; '.join(partition)}",
+                 "-- Plan it with your DBA."]
+        if indexes:
+            lines += ["-- The same fix also adds an index (a normal statement):", *indexes]
+        return lines
     return ["-- No executable change was recommended."]
 
 

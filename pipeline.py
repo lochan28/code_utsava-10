@@ -377,8 +377,16 @@ def _accepted(fn, names):
 ONE_CREATE_INDEX = re.compile(r"\s*CREATE\s+(UNIQUE\s+)?INDEX\b[^;]*;?\s*", re.I | re.S)
 
 
-def _single_create_index(best, deploy_sql):
-    return best.get("kind") == "index" and bool(ONE_CREATE_INDEX.fullmatch(deploy_sql or ""))
+def _index_part(best, deploy_sql):
+    """The ONE CREATE INDEX statement whose write cost and size can be measured, or None.
+    A pure partition has none (measure_write_latency crashes on it); a combined fix
+    "PARTITION ...; CREATE INDEX ..." contributes its index part only."""
+    if best.get("kind") == "index" and ONE_CREATE_INDEX.fullmatch(deploy_sql or ""):
+        return deploy_sql
+    if best.get("combined"):
+        parts = [p for p in (deploy_sql or "").split("; ") if ONE_CREATE_INDEX.fullmatch(p)]
+        return parts[0] if len(parts) == 1 else None
+    return None
 
 
 def _measured(what, measure_fn, allowed, match):
@@ -502,12 +510,16 @@ def analyze(question):
     # Same restore point: the explanation with the admin's real names put back. It is built from
     # the FINISHED explanation, so it can never reach a prompt, and only the Approve step shows it.
     explanation_unmasked = restore(mask.unmask(explanation, mapping))
-    measure = _single_create_index(best, deploy_sql)
-    t_before = _measured("time_before", lambda: sandbox.timed_run(q["sql"]), measure, match)
-    t_after = _measured("time_after", lambda: sandbox.timed_run(q["sql"], [deploy_sql]), measure, match)
-    write_ms = _measured("write_latency", lambda: sandbox.measure_write_latency(deploy_sql)["delta_ms"],
-                         measure, match)
-    storage = _measured("storage", lambda: sandbox.index_size_bytes(deploy_sql), measure, match)
+    index_sql = _index_part(best, deploy_sql)
+    if tradeoff.ok(best.get("measured_ms_before")) and tradeoff.ok(best.get("measured_ms_after")):
+        t_before, t_after = best["measured_ms_before"], best["measured_ms_after"]   # ai/ already timed this fix
+    else:                          # our own timing, only for a plain single index that ai/ did not time
+        own = index_sql is not None and best.get("kind") == "index"
+        t_before = _measured("time_before", lambda: sandbox.timed_run(q["sql"]), own, match)
+        t_after = _measured("time_after", lambda: sandbox.timed_run(q["sql"], [deploy_sql]), own, match)
+    write_ms = _measured("write_latency", lambda: sandbox.measure_write_latency(index_sql)["delta_ms"],
+                         index_sql is not None, match)
+    storage = _measured("storage", lambda: sandbox.index_size_bytes(index_sql), index_sql is not None, match)
     pct = tradeoff.improvement(best.get("cost_before"), best.get("cost_after"))
     return {
         "query_id": q["id"],
