@@ -9,6 +9,7 @@ Everything below is OUR side of the contract. Items marked **LEAD** need the lea
 | `llm` | how the explanation was made: `{source, prompt_leak_ok, reply_leak_ok, latency_ms, fallback_reason}` |
 | `unsafe_rewrite` | `True` if any rewrite returned different rows than the original query |
 | `ai_inputs` | which optional inputs `ai/` really got: `{time_fn, stats, column_types}`, each `"used"`, `"not available yet"`, `"not supported by ai/ yet"`, `"dropped: failed the leak check"`, `"unavailable"` or `"failed: rewrites are unverified"` |
+| _(per recommendation, set by ai/)_ | `measured_gain_pct`, `measured_ms_before`, `measured_ms_after`, `planner_gain_pct`, `timing_note`, `rejected_fixes`, `combined`. The page shows the measured numbers as the headline, the planner estimate in a collapsed box, the note under the time chart, rejected fixes as a neutral note, and a combined fix (`PARTITION ...; CREATE INDEX ...`) as two steps |
 | `deploy_scripts` | the un-masked fix for EACH recommendation, same order as `recommendations` (real values restored). **Approve step only.** `deploy_sql` is the first one |
 | `explanation_unmasked` | the explanation with the admin's real names put back. Built from the FINISHED explanation (after the LLM call), so it never reaches a prompt, the audit log or `ai/`. Shown ONLY inside the Approve section, after the click |
 | `demo` | `True` only on results that Demo mode returned from the recording |
@@ -24,7 +25,7 @@ sorted below every safe fix, so it can never be the "best" one.
 2. **`cost_fn` costs one `CREATE INDEX ...` or one `PARTITION t BY RANGE (c) MONTHLY`** (`SIMULATABLE_ACTION`
    in `pipeline.py`). Anything else (YEARLY, several statements, DROP ...) raises `ValueError`, which P3
    turns into `rule_only`. For rewrites the real values are put back first (section 9).
-3. **`time_fn` returns `{"ms", "results_match"}`, NOT `{"ms", "rows", "checksum"}`.** The real run's
+3. **`time_fn(masked_sql, actions=())` returns `{"ms", "results_match"}`, NOT `{"ms", "rows", "checksum"}`.** `actions` = masked CREATE INDEX / one MONTHLY partition, applied on the sandbox copy before timing (restored to real names only there). A fix the sandbox cannot build raises `ValueError` (ai/ keeps its planner figure). The same (sql, actions) is run once: `checked_run` already takes a median of 5 runs, so ai/'s 5 repeated calls cost one run. The real run's
    rows and checksum are compared inside `pipeline.py` (against the original query) and never go to
    `ai/`. This means no value derived from real result rows reaches `ai/`, so there is nothing to
    approve about that. **It breaks P3's `ai/verify.py`** (reads `rows` and `checksum` directly).
@@ -148,6 +149,9 @@ functions first. **Person 1: please use a restricted role.**
 .venv/Scripts/python -m app.test_restore          # real values restored only for the sandbox + Approve (tripwire)
 .venv/Scripts/python -m app.test_approve          # the Approve step never executes anything
 .venv/Scripts/python -m app.test_demo_mode        # Demo mode: recorded answers, nothing live is touched
+.venv/Scripts/python -m app.test_time_actions     # time_fn(masked_sql, actions): timing a fix on the sandbox copy
+.venv/Scripts/python -m app.test_tail             # combined fixes, index-part-only write cost, Approve script for a combined fix
+.venv/Scripts/python -m app.test_ai_fields        # the page shows ai/'s measured fields, rejected and combined fixes
 ```
 (`test_restore` and `test_approve` use the real masker and read-only sandbox runs, so they need the Docker database.)
 
@@ -168,10 +172,8 @@ functions first. **Person 1: please use a restricted role.**
 ## 13. Asks for other people
 - **Lead:** merge the `ai` branch into master (master still has the 3-argument stub `rl.recommend`), then re-run
   `python -m app.record_demo` so the Demo mode recording matches what is merged.
-- **Person 1:** a larger dataset (5-10M orders) would make the measured gains of composite indexes clearer (q11
-  shows 51% planner vs about 21% measured at 1M).
-- **Person 3:** `ai/verify.py` must read `results_match` instead of `rows` / `checksum`
-  (see section 2, item 3). Also: `stats` now arrives with `eq_sel` already filled in.
+- **Person 3:** `ai/verify.py` already reads `results_match` (done). `stats` arrives with `eq_sel` filled in. Please keep `pipeline.py` out of your commits (it is Person 4's file; the leak checks are in `analyze()` already). A fix that is dropped should keep going into `rejected_fixes` as masked text.
+- **Person 2:** `mask_query` turns an existing `$1` into `$$1` and then flags it as a leak (any logged query or pasted SQL that already has `$n`). Fix: leave existing `$n` placeholders alone.
 - (4c) `table_stats` is now called with the SQL so Person 3 gets `range_sel`; `PARTITION ... MONTHLY` is passed to `cost`.
 - **Person 1 (db/sandbox.py):** pasted SQL reaches `get_plan()`, `cost()` and `checked_run()`. They
   must use plain `EXPLAIN` (never `EXPLAIN ANALYZE`) with a `statement_timeout`, in a read-only
