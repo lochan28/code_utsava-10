@@ -1,6 +1,6 @@
 {
  "recorded": true,
- "recorded_at": "2026-10-03T22:18:58",
+ "recorded_at": "2026-10-04T00:46:31",
  "source": "p3_record_demo.py: real Postgres, Person 1 sandbox cost()/table_stats()/measure_write_latency(), masked",
  "question": "Why is the weekly sales report slow?",
  "query_id": "q11",
@@ -237,7 +237,7 @@
    "actions": [
     "PARTITION t_1c1 BY RANGE (c_02b) MONTHLY"
    ],
-   "cost": 1704.41
+   "cost": 1539.8
   },
   {
    "sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a JOIN t_21e AS a4 ON a4.c_1e3 = a1.c_1e3 WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND a4.c_03e <> $3 GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
@@ -252,6 +252,14 @@
     "CREATE INDEX ON t_1c1 (c_0b8, c_02b)"
    ],
    "cost": 9430.29
+  },
+  {
+   "sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a JOIN t_21e AS a4 ON a4.c_1e3 = a1.c_1e3 WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND a4.c_03e <> $3 GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
+   "actions": [
+    "PARTITION t_1c1 BY RANGE (c_02b) MONTHLY",
+    "CREATE INDEX ON t_1c1 (c_0b8, c_02b)"
+   ],
+   "cost": 1248.43
   }
  ],
  "time_calls": [
@@ -259,7 +267,7 @@
    "sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a JOIN t_21e AS a4 ON a4.c_1e3 = a1.c_1e3 WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND a4.c_03e <> $3 GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
    "actions": [],
    "result": {
-    "ms": 35.83,
+    "ms": 28.09,
     "rows": 40,
     "checksum": "8193f8f7c5bec7a7d0ecc6b8c65648ca"
    }
@@ -268,7 +276,7 @@
    "sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a JOIN t_21e AS a4 ON a4.c_1e3 = a1.c_1e3 WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND a4.c_03e <> $3 GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
    "actions": [],
    "result": {
-    "ms": 30.45,
+    "ms": 26.58,
     "rows": 40,
     "checksum": "8193f8f7c5bec7a7d0ecc6b8c65648ca"
    }
@@ -277,7 +285,7 @@
    "sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a JOIN t_21e AS a4 ON a4.c_1e3 = a1.c_1e3 WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND a4.c_03e <> $3 GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
    "actions": [],
    "result": {
-    "ms": 37.29,
+    "ms": 25.33,
     "rows": 40,
     "checksum": "8193f8f7c5bec7a7d0ecc6b8c65648ca"
    }
@@ -288,7 +296,7 @@
     "PARTITION t_1c1 BY RANGE (c_02b) MONTHLY"
    ],
    "result": {
-    "ms": 21.08,
+    "ms": 10.21,
     "rows": 40,
     "checksum": "8193f8f7c5bec7a7d0ecc6b8c65648ca"
    }
@@ -299,7 +307,7 @@
     "PARTITION t_1c1 BY RANGE (c_02b) MONTHLY"
    ],
    "result": {
-    "ms": 18.14,
+    "ms": 13.86,
     "rows": 40,
     "checksum": "8193f8f7c5bec7a7d0ecc6b8c65648ca"
    }
@@ -310,7 +318,109 @@
     "PARTITION t_1c1 BY RANGE (c_02b) MONTHLY"
    ],
    "result": {
-    "ms": 18.15,
+    "ms": 10.37,
+    "rows": 40,
+    "checksum": "8193f8f7c5bec7a7d0ecc6b8c65648ca"
+   }
+  },
+  {
+   "sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a JOIN t_21e AS a4 ON a4.c_1e3 = a1.c_1e3 WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND a4.c_03e <> $3 GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
+   "actions": [
+    "CREATE INDEX ON t_1c1 (c_0b8, c_02b)"
+   ],
+   "result": {
+    "ms": 14.82,
+    "rows": 40,
+    "checksum": "8193f8f7c5bec7a7d0ecc6b8c65648ca"
+   }
+  },
+  {
+   "sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a JOIN t_21e AS a4 ON a4.c_1e3 = a1.c_1e3 WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND a4.c_03e <> $3 GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
+   "actions": [
+    "CREATE INDEX ON t_1c1 (c_0b8, c_02b)"
+   ],
+   "result": {
+    "ms": 15.73,
+    "rows": 40,
+    "checksum": "8193f8f7c5bec7a7d0ecc6b8c65648ca"
+   }
+  },
+  {
+   "sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a JOIN t_21e AS a4 ON a4.c_1e3 = a1.c_1e3 WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND a4.c_03e <> $3 GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
+   "actions": [
+    "CREATE INDEX ON t_1c1 (c_0b8, c_02b)"
+   ],
+   "result": {
+    "ms": 15.43,
+    "rows": 40,
+    "checksum": "8193f8f7c5bec7a7d0ecc6b8c65648ca"
+   }
+  },
+  {
+   "sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a JOIN t_21e AS a4 ON a4.c_1e3 = a1.c_1e3 WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND a4.c_03e <> $3 GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
+   "actions": [
+    "CREATE INDEX ON t_1c1 (c_0b8)"
+   ],
+   "result": {
+    "ms": 37.99,
+    "rows": 40,
+    "checksum": "8193f8f7c5bec7a7d0ecc6b8c65648ca"
+   }
+  },
+  {
+   "sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a JOIN t_21e AS a4 ON a4.c_1e3 = a1.c_1e3 WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND a4.c_03e <> $3 GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
+   "actions": [
+    "CREATE INDEX ON t_1c1 (c_0b8)"
+   ],
+   "result": {
+    "ms": 26.45,
+    "rows": 40,
+    "checksum": "8193f8f7c5bec7a7d0ecc6b8c65648ca"
+   }
+  },
+  {
+   "sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a JOIN t_21e AS a4 ON a4.c_1e3 = a1.c_1e3 WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND a4.c_03e <> $3 GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
+   "actions": [
+    "CREATE INDEX ON t_1c1 (c_0b8)"
+   ],
+   "result": {
+    "ms": 30.68,
+    "rows": 40,
+    "checksum": "8193f8f7c5bec7a7d0ecc6b8c65648ca"
+   }
+  },
+  {
+   "sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a JOIN t_21e AS a4 ON a4.c_1e3 = a1.c_1e3 WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND a4.c_03e <> $3 GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
+   "actions": [
+    "PARTITION t_1c1 BY RANGE (c_02b) MONTHLY",
+    "CREATE INDEX ON t_1c1 (c_0b8, c_02b)"
+   ],
+   "result": {
+    "ms": 20.79,
+    "rows": 40,
+    "checksum": "8193f8f7c5bec7a7d0ecc6b8c65648ca"
+   }
+  },
+  {
+   "sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a JOIN t_21e AS a4 ON a4.c_1e3 = a1.c_1e3 WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND a4.c_03e <> $3 GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
+   "actions": [
+    "PARTITION t_1c1 BY RANGE (c_02b) MONTHLY",
+    "CREATE INDEX ON t_1c1 (c_0b8, c_02b)"
+   ],
+   "result": {
+    "ms": 9.94,
+    "rows": 40,
+    "checksum": "8193f8f7c5bec7a7d0ecc6b8c65648ca"
+   }
+  },
+  {
+   "sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a JOIN t_21e AS a4 ON a4.c_1e3 = a1.c_1e3 WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND a4.c_03e <> $3 GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
+   "actions": [
+    "PARTITION t_1c1 BY RANGE (c_02b) MONTHLY",
+    "CREATE INDEX ON t_1c1 (c_0b8, c_02b)"
+   ],
+   "result": {
+    "ms": 9.69,
     "rows": 40,
     "checksum": "8193f8f7c5bec7a7d0ecc6b8c65648ca"
    }
@@ -320,9 +430,9 @@
   {
    "sql": "CREATE INDEX ON t_1c1 (c_0b8, c_02b)",
    "result": {
-    "before_ms": 0.00174,
-    "after_ms": 0.00345,
-    "delta_ms": 0.00171
+    "before_ms": 0.00188,
+    "after_ms": 0.00474,
+    "delta_ms": 0.00286
    }
   }
  ],

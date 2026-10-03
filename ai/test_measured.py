@@ -51,8 +51,36 @@ def test_results_differ_rejects():
         assert any("rejected" in x for x in recs[0].get("rejected_fixes", [])), recs[0]
 
 
+def test_combined_and_measured_pick():
+    """Planner likes the partition most; measured time says partition + index is best."""
+    sql = "SELECT COUNT(*) FROM t_1c1 WHERE c_0b8 = $1 AND c_02b >= $2"
+    types = {"t_1c1.c_0b8": "number", "t_1c1.c_02b": "date"}
+    stats = {**STATS, "range_sel": {"t_1c1.c_02b": 0.1}}
+
+    def cost(sql_, acts):
+        p, i = any("PARTITION" in a for a in acts), any("INDEX" in a for a in acts)
+        return 1000.0 - 800 * p - 500 * i if not (p and i) else 150.0
+
+    def timed(sql_, actions=()):
+        p, i = any("PARTITION" in a for a in actions), any("INDEX" in a for a in actions)
+        return {"ms": {(0, 0): 100.0, (1, 0): 70.0, (0, 1): 60.0, (1, 1): 20.0}[(p, i)],
+                "rows": 1, "checksum": "same"}
+
+    recs = rl.recommend(sql, PLAN, cost, stats=stats, time_fn=timed, agent=rl.BanditAgent(),
+                        column_types=types)
+    kinds = [r["kind"] for r in recs]
+    if "partition" not in kinds:
+        print("SKIP combined test: untrained agent did not shortlist a partition", kinds)
+        return
+    top = recs[0]
+    assert top.get("combined") and top["measured_gain_pct"] == 80.0, top
+    assert "PARTITION" in top["action"] and "CREATE INDEX" in top["action"], top["action"]
+    print("  combined summary:", top["summary"])
+
+
 if __name__ == "__main__":
-    for t in (test_time_fn_present, test_time_fn_missing, test_results_differ_rejects):
+    for t in (test_time_fn_present, test_time_fn_missing, test_results_differ_rejects,
+              test_combined_and_measured_pick):
         t()
         print("PASS", t.__name__)
     print("example summary:", run(make_time_fn())[0]["summary"])

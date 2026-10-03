@@ -392,7 +392,11 @@ def _fix_phrase(r):
     if r["kind"] == "rewrite":
         return "rewrite the query (" + r.get("rule_label", "same-result rewrite") + ")"
     if r["kind"] == "partition":
-        return "partition " + r["action"].split("PARTITION ", 1)[1].split(" BY RANGE")[0] +             " by " + r["action"].split("(", 1)[1].split(")")[0]
+        part = r["action"].split("; ")[0]
+        text = ("partition " + part.split("PARTITION ", 1)[1].split(" BY RANGE")[0] +
+                " by " + part.split("(", 1)[1].split(")")[0])
+        idx = r["action"].split("; ")[1:]
+        return text + (" and " + _fix_phrase({"kind": "index", "action": "; ".join(idx)}) if idx else "")
     idx = [a.split("CREATE INDEX ON ", 1)[1] for a in r["action"].split("; ")]
     word = "composite index" if any("," in i for i in idx) else "index"
     return f"add {word}{'es' if len(idx) > 1 else ''} on " + " and ".join(idx)
@@ -445,13 +449,47 @@ def bundle_summary(recs):
     return text + "." + note + " Zero raw data exposed to the AI (masked metadata only)."
 
 
-def _time_winner(recs, masked_sql, time_fn, runs=TIME_WINNER_RUNS):
-    """Measure the winning index/partition fix for real: original vs fixed, median of `runs`
-    each, through time_fn(masked_sql, actions=[...]) (Person 1 checked_run on the sandbox copy).
-    Additive keys only; ranking and reward stay on planner cost.
+def _combined_fix(recs, masked_sql, cost_fn):
+    """Partition + the best index together (the PS4 expected fix for q11), costed on the
+    partitioned copy. None when there is no partition and index pair or it can't be simulated."""
+    part = next((r for r in recs if r["kind"] == "partition"), None)
+    idx = next((r for r in recs if r["kind"] == "index"), None)
+    if part is None or idx is None or cost_fn is None:
+        return None
+    actions = part["action"].split("; ") + idx["action"].split("; ")
+    try:
+        after = cost_fn(masked_sql, actions)
+    except ValueError:
+        return None
+    before = part["cost_before"]
+    drop = max(0.0, (before - after) / before) if before else 0.0
+    if drop <= 0:
+        return None
+    return {"kind": "partition", "action": "; ".join(actions), "cost_before": before, "cost_after": after,
+            "novelty": part["novelty"], "agent_score": None, "write_penalty": idx["write_penalty"],
+            "verified_by": "hypopg_cost", "improvement_pct": round(100 * drop, 1),
+            "reward": round(drop - idx["write_penalty"], 3), "combined": True,
+            "reason": f"Partition and index together: simulated cost {before:,.0f} -> {after:,.0f} "
+                      f"({100 * drop:.1f}% lower)."}
+
+
+def _measured_gain(r):
+    """Measured % gain of a rec, or None when it was not timed."""
+    if r.get("measured_gain_pct") is not None:
+        return r["measured_gain_pct"]
+    if r["kind"] == "rewrite" and r.get("verified_by") == "timed_run" and r.get("speedup"):
+        return 100 * (1 - 1 / r["speedup"])
+    return None
+
+
+def _time_winner(recs, masked_sql, time_fn, cost_fn=None, runs=TIME_WINNER_RUNS):
+    """Measure the verified index/partition fixes for real (plus partition + index combined),
+    original vs fixed, median of `runs` each, through time_fn(masked_sql, actions=[...])
+    (Person 1 checked_run on the sandbox copy). Then the fix with the best MEASURED gain
+    goes first: the planner overestimates partition gains, so it only shortlists.
       - same results  -> verified_by = "timed_run", measured_* keys, planner_gain_pct kept
-      - results differ -> the fix is REJECTED (removed) and the next one is tried
-    Returns the list of rejected fixes (as notes)."""
+      - results differ -> the fix is REJECTED (removed)
+    Agent ranking and reward are unchanged. Returns the list of rejected fixes (as notes)."""
     rejected = []
     if time_fn is None or not verify.accepts(time_fn, "actions"):
         for r in recs:
@@ -461,25 +499,37 @@ def _time_winner(recs, masked_sql, time_fn, runs=TIME_WINNER_RUNS):
                 r["timing_note"] = ("estimated by the planner (not timed)" if time_fn is None else
                                     "estimated by the planner (not timed: time_fn has no actions parameter)")
         return rejected
-    for r in list(recs):
-        if r["kind"] not in ("index", "partition") or r["verified_by"] != "hypopg_cost" or r["improvement_pct"] <= 0:
+    combo = _combined_fix(recs, masked_sql, cost_fn)
+    if combo:
+        recs.append(combo)
+    todo = [r for r in recs if r["kind"] in ("index", "partition") and r["verified_by"] == "hypopg_cost"
+            and r["improvement_pct"] > 0]
+    if not todo:
+        return rejected
+    before = [time_fn(masked_sql, actions=[]) for _ in range(runs)]
+    med_b = statistics.median(x["ms"] for x in before)
+    for r in todo:
+        try:
+            after = [time_fn(masked_sql, actions=r["action"].split("; ")) for _ in range(runs)]
+        except ValueError:                       # sandbox can't build it: keep the planner figure
             continue
-        actions = r["action"].split("; ")
-        before = [time_fn(masked_sql, actions=[]) for _ in range(runs)]
-        after = [time_fn(masked_sql, actions=actions) for _ in range(runs)]
-        same = all(verify.results_equal(before[0], x) for x in before[1:] + after)
-        if not same:
+        if not all(verify.results_equal(before[0], x) for x in before[1:] + after):
             recs.remove(r)
             rejected.append(f"{r['action']} rejected: it returned different results in the sandbox run")
             continue
-        med_b = statistics.median(x["ms"] for x in before)
         med_a = statistics.median(x["ms"] for x in after)
         r.update({"verified_by": "timed_run", "measured_ms_before": round(med_b, 2),
                   "measured_ms_after": round(med_a, 2),
                   "measured_gain_pct": round(100 * (1 - med_a / med_b), 1) if med_b else None,
                   "planner_gain_pct": r["improvement_pct"],
                   "timing_note": f"median of {runs} sandbox runs each, same results"})
-        break                                    # only the winner is timed
+    timed = [r for r in recs if _measured_gain(r) is not None]
+    if timed:                                    # best measured fix first, the rest keep their order
+        best = max(timed, key=_measured_gain)
+        recs.remove(best)
+        recs.insert(0, best)
+    if combo in recs and combo is not recs[0]:   # only offer the combination when it wins
+        recs.remove(combo)
     return rejected
 
 
@@ -590,7 +640,7 @@ def recommend(masked_sql, masked_plan, cost_fn, stats=None, time_fn=None, agent=
             and (t[0]["verified_by"] == "rule_only" or t[0]["improvement_pct"] > 0)]
     if not recs:
         return []
-    rejected_fixes = _time_winner(recs, masked_sql, time_fn)   # measured check of the winner
+    rejected_fixes = _time_winner(recs, masked_sql, time_fn, cost_fn)   # measured check of the winner
     if not recs:
         return []
     # best rejected = the next-best option we tried, else the top one we never simulated
