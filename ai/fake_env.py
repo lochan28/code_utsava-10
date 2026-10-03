@@ -93,7 +93,8 @@ def make_variants(seed=SEED):
                 "id": f"{shape}v{v}", "shape": shape, "sql": sql,
                 "catalog": {"rows": rows, "ndistinct": nd, "range_sel": rsel,
                             "date_cols": {r(c) for c in DATE_COLS},
-                            "pk": {r(t): r(c) for t, c in PRIMARY_KEYS.items()}},
+                            # The only indexes the real DB has are the primary keys.
+                            "existing_indexes": [(r(t), (r(c),)) for t, c in PRIMARY_KEYS.items()]},
             })
     return out
 
@@ -112,7 +113,8 @@ def stats_for_agent(catalog):
         for c, n in catalog["ndistinct"].items():
             eq_sel[f"{t}.{c}"] = 1.0 / min(n, rows)
     rsel = {f"{t}.{c}": s for t in catalog["rows"] for c, s in catalog["range_sel"].items()}
-    return {"rows": dict(catalog["rows"]), "eq_sel": eq_sel, "range_sel": rsel}
+    return {"rows": dict(catalog["rows"]), "eq_sel": eq_sel, "range_sel": rsel,
+            "existing_indexes": list(catalog["existing_indexes"])}
 
 
 # ------------------------------------------------------------
@@ -159,8 +161,8 @@ def fake_cost(sql, actions, catalog):
     tree = sqlglot.parse_one(sql, read="postgres")
     info = sqlinfo.analyze(sql)
     idx, parts = _parse_actions(actions)
-    for t, c in catalog["pk"].items():                      # primary keys always exist
-        idx.setdefault(t, []).append([c])
+    for t, cols in catalog["existing_indexes"]:             # already in the DB (e.g. primary keys)
+        idx.setdefault(t, []).append(list(cols))
     rows_of, nd, rsel = catalog["rows"], catalog["ndistinct"], catalog["range_sel"]
     eq_sel = lambda t, c: 1.0 / min(nd.get(c, 100), rows_of[t])
 

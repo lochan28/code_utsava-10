@@ -180,7 +180,8 @@ class BanditAgent:
         """All candidates, best predicted first: [(score, candidate, action_key)]."""
         info = sqlinfo.analyze(masked_sql, column_types)
         s = state_key(info, stats)
-        entries = [(c, action_key(c, info, stats)) for c in cand_mod.candidates(masked_sql, column_types)]
+        cands = cand_mod.candidates(masked_sql, column_types, stats.get("existing_indexes"))
+        entries = [(c, action_key(c, info, stats)) for c in cands]
         entries.sort(key=lambda e: self._order(s, e))      # stable: list order only if fully tied
         return s, [(self.score(s, a), c, a) for c, a in entries]
 
@@ -227,14 +228,16 @@ class BanditAgent:
 # ------------------------------------------------------------
 # Baselines for comparison
 # ------------------------------------------------------------
-def index_every_filter_column(masked_sql):
-    """Naive DBA move: one single-column index on every filter / join column."""
+def index_every_filter_column(masked_sql, existing_indexes=None):
+    """Naive DBA move: one single-column index on every filter / join column
+    (skipping ones that already exist, so it isn't charged for no-op indexes)."""
+    existing = cand_mod.normalize_existing(existing_indexes)
     info = sqlinfo.analyze(masked_sql)
     useful = {"eq_filter", "range_filter", "or_filter", "join", "correlated", "not_in"}
     sqls, cols = [], {}
     for key, v in info["columns"].items():
         t, c = key.split(".", 1)
-        if t != sqlinfo.UNKNOWN_TABLE and useful & set(v["roles"]):
+        if t != sqlinfo.UNKNOWN_TABLE and useful & set(v["roles"]) and (t, (c,)) not in existing:
             sqls.append(f"CREATE INDEX ON {t} ({c})")
             cols.setdefault(t, []).append(c)
     return {"kind": "index", "sqls": sqls, "cols": cols, "why": "baseline"}
@@ -275,14 +278,14 @@ if __name__ == "__main__":
     for v in test:
         stats, f = fake_env.stats_for_agent(v["catalog"]), fake_env.make_cost_fn(v["catalog"])
         before = f(v["sql"], [])
-        cands = cand_mod.candidates(v["sql"])
+        cands = cand_mod.candidates(v["sql"], None, stats["existing_indexes"])
         rl = row(v, agent.choose(v["sql"], stats), before, f)
         verified, _, _, _, calls = agent.choose_verified(v["sql"], stats, f)
         rlv = row(v, verified, before, f)
         n_calls.append(calls)
         rnd = [row(v, c, before, f) for c in cands]
         rnd = tuple(sum(x[i] for x in rnd) / len(rnd) for i in range(3))   # expected value of a random pick
-        allx = row(v, index_every_filter_column(v["sql"]), before, f)
+        allx = row(v, index_every_filter_column(v["sql"], stats["existing_indexes"]), before, f)
         best = max(row(v, c, before, f) for c in cands)                   # oracle: tries every fix
         pick = agent.choose(v["sql"], stats)
         label = pick["rule"] if pick["kind"] == "rewrite" else " + ".join(pick["sqls"])
@@ -296,7 +299,7 @@ if __name__ == "__main__":
     for name, rs in totals.items():
         avg = [sum(r[i] for r in rs) / len(rs) for i in range(3)]
         print(f"  {name:18} {avg[0]:12.1f} {avg[1]:10.2f} {avg[2]:8.3f}")
-    cands_per_q = [len(cand_mod.candidates(v["sql"])) for v in test]
+    cands_per_q = [len(cand_mod.candidates(v["sql"], None, v["catalog"]["existing_indexes"])) for v in test]
     print(f"\ncost_fn calls per query: RL alone 0 | RL + top-{VERIFY_TOP_K} verify {max(n_calls)} "
           f"(1 baseline + {VERIFY_TOP_K} fixes) | oracle 1 + all candidates = "
           f"{min(cands_per_q) + 1}-{max(cands_per_q) + 1}")

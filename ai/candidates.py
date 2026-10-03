@@ -23,10 +23,6 @@ PROPOSE_PARTITIONS_WITHOUT_TYPES = True  # Column types aren't available from pr
                                          # True: propose partitioning on any range-filtered
                                          # column and let cost_fn judge. False: only when
                                          # the column is known to be a date.
-PARTITION_SKIP_KEY_COLUMNS = True  # TEMPORARY guess while column types are missing: don't
-                                   # partition on a column that is also a join/lookup key
-                                   # (keys like customer_id are rarely good partition columns;
-                                   # dates are rarely join keys). Ignored once types exist.
 
 # ============================================================
 # FIXED SETTINGS - formats agreed with the team
@@ -53,10 +49,16 @@ def _by_table(info):
     return out
 
 
-def index_candidates(info):
-    """Single and composite indexes from how columns are used.
+def normalize_existing(existing_indexes):
+    """Existing indexes as a set of (table, (col, ...)) - masked names, column order matters.
+    Accepts lists or tuples for the columns. None = no information (assume none exist)."""
+    return {(t, tuple(cols)) for t, cols in (existing_indexes or [])}
+
+
+def index_candidates(info, existing=frozenset()):
+    """Single and composite indexes from how columns are used, minus ones that already exist.
     Returns a list of {"kind": "index", "sqls": [...], "cols": {table: [cols]}, "why": str}."""
-    found, seen = [], set()
+    found, seen = [], set(existing)            # existing indexes count as "already proposed"
 
     def add(table, cols, why):
         key = (table, tuple(cols))
@@ -95,18 +97,18 @@ def index_candidates(info):
     return found
 
 
-def or_candidates(info):
-    """A filter like  a = $1 OR b = $2  needs one index per side, used together."""
+def or_candidates(info, existing=frozenset()):
+    """A filter like  a = $1 OR b = $2  needs one index per side, used together.
+    Sides that already have an index are left out; if only ONE side is missing, that is
+    already a single-column candidate, so no pair is proposed."""
     found = []
     for table, roles in _by_table(info).items():
         or_cols = roles.get("or_filter", [])
-        if len(or_cols) >= 2:
-            found.append({"kind": "index", "sqls": [_index_sql(table, [c]) for c in or_cols],
-                          "cols": {table: list(or_cols)}, "why": "one index per OR branch"})
+        missing = [c for c in or_cols if (table, (c,)) not in existing]
+        if len(or_cols) >= 2 and len(missing) >= 2:
+            found.append({"kind": "index", "sqls": [_index_sql(table, [c]) for c in missing],
+                          "cols": {table: list(missing)}, "why": "one index per OR branch"})
     return found
-
-
-KEY_ROLES = {"join", "correlated", "not_in", "in_subquery"}
 
 
 def partition_column_ok(roles, col_type=None):
@@ -119,8 +121,6 @@ def partition_column_ok(roles, col_type=None):
         return col_type == "date"        # real type known: trust it
     if not PROPOSE_PARTITIONS_WITHOUT_TYPES:
         return False
-    if PARTITION_SKIP_KEY_COLUMNS and roles & KEY_ROLES:
-        return False                     # temporary guess: keys aren't partition columns
     return True
 
 
@@ -147,10 +147,14 @@ def rewrite_candidates(masked_sql):
              "why": rewrite.RULE_REASONS[r["rule"]]} for r in rewrite.rewrite_sql(masked_sql)]
 
 
-def candidates(masked_sql, column_types=None):
-    """All fix candidates for one masked query, in a stable order."""
+def candidates(masked_sql, column_types=None, existing_indexes=None):
+    """All fix candidates for one masked query, in a stable order.
+    existing_indexes: [(table, [cols])] masked - indexes that already exist (incl. primary
+    keys). They are never proposed. Until Person 1/2 supply the real list, callers pass
+    what they know (fake_env derives it from primary keys)."""
     info = sqlinfo.analyze(masked_sql, column_types)
-    return (index_candidates(info) + or_candidates(info)
+    existing = normalize_existing(existing_indexes)
+    return (index_candidates(info, existing) + or_candidates(info, existing)
             + partition_candidates(info) + rewrite_candidates(masked_sql))
 
 
