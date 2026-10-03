@@ -13,6 +13,7 @@ import math
 import os
 import re
 
+import psycopg
 import sqlglot
 from sqlglot import exp
 
@@ -260,28 +261,48 @@ class TimeCheckError(RuntimeError):
 def make_time_fn(original_sql, masked_original, mapping, checks, restore=None):
     """time_fn for ai/, or None until Person 1's sandbox has checked_run().
 
-    The real run returns {"ms", "rows", "checksum"}. Rows and checksum are compared HERE
-    against the original query and never leave this function: ai/ only gets
-    {"ms", "results_match"}. Every call is also recorded in `checks` (a list)."""
+    time_fn(masked_sql, actions=()): run `masked_sql` on the sandbox copy, with the masked `actions`
+    (CREATE INDEX / one MONTHLY PARTITION) applied first, and time it. The real run returns
+    {"ms", "rows", "checksum"}. Rows and checksum are compared HERE against the ORIGINAL query
+    (run once with no actions) and never leave this function: ai/ only gets {"ms", "results_match"}.
+    An action the sandbox cannot build raises ValueError (ai/ then keeps its planner estimate);
+    any other failure raises TimeCheckError. Every call is recorded in `checks` (a list).
+
+    checked_run already reports the MEDIAN of several runs, so asking again for the same
+    (sql, actions) returns the first answer instead of re-running it (it saves minutes of sandbox time)."""
     run = getattr(sandbox, "checked_run", None)
     if run is None:
         return None
     restore = restore or (lambda sql: sql)
-    baseline = {}
+    baseline, answers = {}, {}
 
-    def time_fn(m_sql):
+    def time_fn(m_sql, actions=()):
+        actions = list(actions or ())
+        for action in actions:
+            if not SIMULATABLE_ACTION.fullmatch(action):
+                raise ValueError("Only one CREATE INDEX or one MONTHLY partition can be timed.")
+        key = (m_sql, tuple(actions))
+        if key in answers:
+            return dict(answers[key])
         try:
-            # RESTORE POINT 2 of 3 (sandbox call): a rewrite gets its real values back HERE, only
-            # to be run on the sandbox copy. ai/ gets {"ms", "results_match"}, never the SQL.
+            # RESTORE POINT 2 of 3 (sandbox call): the SQL and the actions get their real names and
+            # values back HERE, only to be run on the sandbox copy. ai/ gets {"ms", "results_match"}.
             sql = original_sql if m_sql == masked_original else restore(mask.unmask(m_sql, mapping))
+            real_actions = [restore(mask.unmask(a, mapping)) for a in actions]
             if "run" not in baseline:
                 baseline["run"] = run(original_sql)
             base = baseline["run"]
-            res = base if sql == original_sql else run(sql)
+            if sql == original_sql and not real_actions:
+                res = base
+            else:
+                res = run(sql, real_actions) if real_actions else run(sql)
             match = (res["rows"], res["checksum"]) == (base["rows"], base["checksum"])
-            checks.append({"masked_sql": m_sql, "ms": res["ms"], "results_match": match})
-            return {"ms": res["ms"], "results_match": match}
+            checks.append({"masked_sql": m_sql, "actions": actions, "ms": res["ms"], "results_match": match})
+            answers[key] = {"ms": res["ms"], "results_match": match}
+            return dict(answers[key])
         except Exception as e:                           # noqa: BLE001
+            if actions and isinstance(e, (ValueError, psycopg.ProgrammingError)):   # a fix that cannot be built
+                raise ValueError("The sandbox could not build that fix.") from None
             raise TimeCheckError(type(e).__name__) from None
     return time_fn
 
@@ -451,7 +472,7 @@ def analyze(question):
 
     # A rewrite whose rows differ from the original query's rows is UNSAFE. Flag it, and
     # sort it below every safe fix so it can never become the "best" one.
-    unsafe = {c["masked_sql"] for c in checks if not c["results_match"]}
+    unsafe = {c["masked_sql"] for c in checks if not c["results_match"] and not c["actions"]}   # rewrites only
     for r in recs:
         if r.get("kind") == "rewrite" and r.get("action") in unsafe:
             r["unsafe_rewrite"] = True
