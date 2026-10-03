@@ -91,7 +91,7 @@ def run(cost_fn=None, time_fn=None, stats=None, write_fn=None, out=print):
     out(f"VERIFIED   {top['verified_by']}{tag}")
     if top.get("measured_gain_pct") is not None:
         out(f"MEASURED   {top['measured_ms_before']:,.1f} ms -> {top['measured_ms_after']:,.1f} ms = "
-            f"{top['measured_gain_pct']:.1f}% faster (median of 3 sandbox runs, same results){tag}")
+            f"{top['measured_gain_pct']:.1f}% faster (median of {rl.TIME_WINNER_RUNS} sandbox runs, same results){tag}")
         out(f"PLANNER    estimate {top['planner_gain_pct']:.1f}% lower cost (planner estimate){tag}")
     elif top.get("planner_gain_pct") is not None:
         out(f"PLANNER    estimate {top['planner_gain_pct']:.1f}% lower cost (planner estimate; not timed)")

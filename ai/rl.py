@@ -44,7 +44,7 @@ WRITE_PENALTY_PER_COL = 0.03   # Reward cost of each index column (slower writes
 PARTITION_WRITE_WIDTH = 1      # Partitioning counted as this many index columns of penalty.
 BACKOFF_STRENGTH = 2.0    # How many real tries it takes before a specific (query kind, fix kind)
                           # estimate outweighs the more general fallback estimate.
-TIME_WINNER_RUNS = 3      # Measured confirmation of the winning index/partition fix: time
+TIME_WINNER_RUNS = 5      # Measured confirmation of the winning index/partition fix: time
                           # original and fixed this many times each (median). More = steadier,
                           # slower. Needs a time_fn with an `actions` parameter.
 VERIFY_TOP_K = 3          # Safety net: really simulate the agent's top K picks with cost_fn
