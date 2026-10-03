@@ -50,6 +50,14 @@ def target_status(pct):
     return "none" if pct == 0 else "worse"
 
 
+def disagree(cost, time):
+    """True when the planner estimate and the measured time point in OPPOSITE directions
+    (one says better, the other says worse). Zero or unknown never counts as a disagreement."""
+    if not (cost and time and ok(cost["pct"]) and ok(time["pct"])):
+        return False
+    return cost["pct"] * time["pct"] < 0
+
+
 def top_recommendation(recs):
     """The fix the page calls 'top pick': first by trust, never an unsafe one. None if there is none."""
     ranked = sort_recommendations(recs)

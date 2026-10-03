@@ -169,9 +169,9 @@ def test_page_full_data_charts_numbers_and_sources():
     print(f"      metrics: {metrics_of(at)}")
     assert metrics_of(at) == {"Estimated cost improvement": "95.8%", "Measured time improvement": "71.8%",
                               "Write latency": "+0.002 ms per insert", "Extra storage": "+21.0 MB"}
-    assert [(c["y_title"], c["bars"]) for c in cs] == [
-        ("planner cost units (estimate)", [("before", 19437.0), ("after", 812.0)]),
-        ("measured milliseconds", [("before", 418.0), ("after", 118.0)])]
+    assert [(c["y_title"], c["bars"]) for c in cs] == [          # the measured time leads, the estimate follows
+        ("measured milliseconds", [("before", 418.0), ("after", 118.0)]),
+        ("planner cost units (estimate)", [("before", 19437.0), ("after", 812.0)])]
     caps = captions(at)
     for source in ("Source: planner estimate", "418 ms → 118 ms · Source: measured",
                    "Source: measured on a sandbox copy"):
@@ -180,14 +180,15 @@ def test_page_full_data_charts_numbers_and_sources():
     ok_, warn, err = verdicts(at)
     assert len(ok_) == 2 and all("Meets the target: more than 50% improvement." == s for s in ok_) and not warn and not err
     text = page_text(at)
-    assert "You gain" in text and "95.8% lower estimated cost" in text and "71.8% faster (measured)" in text
+    assert "You gain" in text and "71.8% faster (measured)" in text           # only the measured gain is the headline
+    assert "lower estimated cost" not in text
     assert "You pay in writes" in text and "You pay in storage" in text and "+21.0 MB" in text
 
 
 def test_page_never_puts_cost_units_and_milliseconds_on_one_chart():
     cs = charts_of(run_page(index_result()))
     assert len(cs) == 2 and all(len(c["bars"]) == 2 for c in cs)
-    cost_chart, time_chart = cs
+    time_chart, cost_chart = cs                       # the measured time is the headline, so it is first
     assert "cost" in cost_chart["y_title"] and "millisecond" not in cost_chart["y_title"]
     assert "millisecond" in time_chart["y_title"] and "cost" not in time_chart["y_title"]
     assert cost_chart["y_title"] != time_chart["y_title"]
@@ -249,12 +250,12 @@ def test_page_a_fix_that_makes_things_worse_is_red():
     ok_, warn, err = verdicts(at)
     print(f"      errors: {err}")
     assert ok_ == [] and warn == []
-    assert err == ["WORSE: this fix is estimated to make the query MORE expensive.",
-                   "WORSE: this fix made the query SLOWER when measured."]
+    assert err == ["WORSE: this fix made the query SLOWER when measured.",          # the headline
+                   "WORSE: this fix is estimated to make the query MORE expensive."]
     assert metrics_of(at)["Estimated cost improvement"] == "-30.0%" and metrics_of(at)["Measured time improvement"] == "-40.0%"
     assert [c["after_color"] for c in charts_of(at)] == ["#d64545"] * 2  # literal red
     text = page_text(at)
-    assert ":red[30.0% HIGHER estimated cost (worse)]" in text and ":red[40.0% SLOWER (measured, worse)]" in text
+    assert ":red[40.0% SLOWER (measured, worse)]" in text and "HIGHER estimated cost" not in text   # measured only
     assert "Meets the target" not in text and "lower estimated cost" not in text
 
 
@@ -327,6 +328,94 @@ def test_sample_variants_each_show_the_right_state():
         assert expect[sample_data.VARIANTS[1]] == (2, 2, 0)
         assert expect[sample_data.VARIANTS[2]] == (2, 0, 2)                    # worse: red, nothing green
         assert expect[sample_data.VARIANTS[3]] == (0, 0, 0)                    # only unsafe: no charts, no good news
+        assert expect[sample_data.VARIANTS[4]] == (2, 1, 0)                    # planner says worse, measured faster: no red
+
+
+def charts_in(block):
+    found = []
+    for child in block.children.values():
+        if getattr(child, "type", "") == "vega_lite_chart":
+            found.append(json.loads(child.proto.spec)["layer"][0]["encoding"]["y"]["title"])
+        if hasattr(child, "children"):
+            found += charts_in(child)
+    return found
+
+
+def markers_in_order(at):
+    """Every success / warning / error on the page, in the order they appear (the headline first)."""
+    skip = ("No evidence attached", "SAMPLE DATA")
+    return [(e.type, e.value) for e in elements(at)
+            if getattr(e, "type", "") in ("success", "warning", "error") and not e.value.startswith(skip)]
+
+
+def test_disagree_rule():
+    cost = lambda p: {"pct": p}
+    assert tradeoff.disagree(cost(-10.0), {"pct": 30.0}) and tradeoff.disagree(cost(20.0), {"pct": -5.0})
+    assert not tradeoff.disagree(cost(20.0), {"pct": 5.0}) and not tradeoff.disagree(cost(-1.0), {"pct": -9.0})
+    assert not tradeoff.disagree(cost(0.0), {"pct": 30.0}) and not tradeoff.disagree(cost(10.0), {"pct": 0.0})
+    for none in (None, {}, cost(None)):
+        assert not tradeoff.disagree(none, {"pct": 30.0}) and not tradeoff.disagree(cost(10.0), none)
+
+
+def test_page_measured_time_is_the_headline_and_the_planner_estimate_is_collapsed():
+    at = run_page(index_result())
+    expanders = {e.label: e for e in at.expander}
+    box = expanders["Planner estimate (can disagree with measured time)"]
+    assert box.proto.expanded is False                                   # collapsed by default
+    assert charts_in(box) == ["planner cost units (estimate)"]           # the estimate lives INSIDE it
+    assert [c["y_title"] for c in charts_of(at)][0] == "measured milliseconds"   # the headline chart is first
+    assert "measured milliseconds" not in charts_in(box)
+    assert metrics_of(at)["Measured time improvement"] == "71.8%" and "Estimated cost improvement" in metrics_of(at)
+
+
+def test_page_without_a_measured_time_keeps_todays_layout():
+    at = run_page(index_result(time=None))
+    assert "Planner estimate (can disagree with measured time)" not in [e.label for e in at.expander]
+    assert [c["y_title"] for c in charts_of(at)] == ["planner cost units (estimate)"]
+    assert any(i.value == "Not measured, cost estimate only." for i in at.info)
+    assert "Meets the target: more than 50% improvement." in [s.value for s in at.success]   # the cost marker, as before
+
+
+def test_page_planner_says_worse_but_measured_faster_is_an_amber_note_not_red():
+    at = run_page(index_result(cost=(1000.0, 1300.0), time=(100.0, 60.0)))      # cost -30%, measured +40%
+    marks = markers_in_order(at)
+    print(f"      markers in order: {marks}")
+    assert not any(kind == "error" for kind, _ in marks), marks
+    assert marks[0] == ("warning", "Below the 50% target.")               # headline: the measured 40%
+    assert marks[1][0] == "warning" and "points the other way" in marks[1][1]
+    assert "WORSE" not in page_text(at)
+    colours = {c["y_title"]: c["after_color"] for c in charts_of(at)}
+    assert colours["planner cost units (estimate)"] == "#8a8f98"          # neutral gray, not red
+    assert colours["measured milliseconds"] == "#e0a030"
+    # the other direction: planner says better, the stopwatch says worse -> headline red, estimate neutral
+    at = run_page(index_result(cost=(100.0, 50.0), time=(100.0, 150.0)))
+    marks = markers_in_order(at)
+    assert marks[0] == ("error", "WORSE: this fix made the query SLOWER when measured.")
+    assert not any(kind == "success" for kind, _ in marks) and "points the other way" in marks[1][1]
+
+
+def test_page_when_both_say_worse_both_stay_red():
+    at = run_page(index_result(cost=(1000.0, 1300.0), time=(100.0, 140.0)))
+    assert [kind for kind, _ in markers_in_order(at)] == ["error", "error"]
+    assert "points the other way" not in page_text(at)
+
+
+def test_page_target_check_uses_the_measured_improvement():
+    at = run_page(index_result(cost=(19437.0, 812.0), time=(100.0, 60.0)))        # cost 96%, measured 40%
+    marks = markers_in_order(at)
+    assert marks[0] == ("warning", "Below the 50% target.")               # the HEADLINE follows the stopwatch
+    assert marks[1] == ("success", "Meets the target: more than 50% improvement.")
+    at = run_page(index_result(cost=(100.0, 70.0), time=(100.0, 20.0)))           # cost 30%, measured 80%
+    marks = markers_in_order(at)
+    assert marks[0] == ("success", "Meets the target: more than 50% improvement.")
+    assert marks[1] == ("warning", "Below the 50% target.")
+
+
+def test_page_tradeoff_shows_only_the_measured_gain_when_there_is_one():
+    text = page_text(run_page(index_result()))
+    assert "71.8% faster (measured)" in text and "lower estimated cost" not in text
+    text = page_text(run_page(index_result(time=None)))
+    assert "95.8% lower estimated cost" in text and "faster (measured)" not in text
 
 
 def run_all():

@@ -56,7 +56,8 @@ SAMPLE_RECOMMENDATIONS = [
 VARIANTS = ["Rewrite on top (measured)",
             "Index on top (with write and storage cost)",
             "Fix makes things worse",
-            "Only unsafe fixes"]
+            "Only unsafe fixes",
+            "Rewrite: planner says worse, measured faster"]
 
 _SIMULATED_INDEX = SAMPLE_RECOMMENDATIONS[3]
 _UNSAFE_REWRITE = SAMPLE_RECOMMENDATIONS[0]
@@ -87,6 +88,11 @@ def demo_result(variant=VARIANTS[0]):
         r.update(cost_before=1000.0, cost_after=1300.0, improvement_pct=-30.0, time_before_ms=100.0,
                  time_after_ms=140.0, write_latency_ms=0.9, storage_bytes=5_500_000, unsafe_rewrite=False,
                  explanation="(sample) This fix is estimated to make the query slower.")
+    elif variant == VARIANTS[4]:     # the planner and the stopwatch disagree (common for rewrites)
+        r["recommendations"] = [{**SAMPLE_RECOMMENDATIONS[4], "cost_before": 1000.0, "cost_after": 1100.0,
+                                 "time_before_ms": 400.0, "time_after_ms": 120.0, "speedup": 3.33,
+                                 "improvement_pct": 70.0}]
+        r.update(unsafe_rewrite=False)
     elif variant == VARIANTS[3]:     # nothing safe: no good news may be shown
         r["recommendations"] = [dict(_UNSAFE_REWRITE)]
         r.update(explanation="(sample) The only rewrite found returns different rows.")

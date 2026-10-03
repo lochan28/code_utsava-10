@@ -161,16 +161,24 @@ def target_marker(status, worse_text):
         st.info("Improvement could not be worked out.")
 
 
-def render_cost_panel(c):
+def render_cost_panel(c, time=None):
+    """The planner's estimate. If a MEASURED time exists and says the opposite, the estimate is
+    not shown as a red failure: a neutral amber note says to trust the measurement."""
     with st.container(border=True):
         st.markdown("**Planner cost** · the planner's estimate, not a stopwatch")
         if c is None:
             st.info(f"Cost: {tradeoff.NOT_MEASURED}. No before/after cost numbers for the top pick.")
             return
+        opposite = tradeoff.disagree(c, time)
         st.metric("Estimated cost improvement", tradeoff.fmt_pct(c["pct"]))
-        target_marker(c["status"], "WORSE: this fix is estimated to make the query MORE expensive.")
+        if opposite:
+            st.warning("The planner's estimate points the other way from the measured time. Trust the "
+                       "measured time: planner estimates are often unreliable, especially for rewrites.",
+                       icon=":material/info:")
+        else:
+            target_marker(c["status"], "WORSE: this fix is estimated to make the query MORE expensive.")
         st.altair_chart(charts.before_after_chart(c["before"], c["after"], "planner cost units (estimate)",
-                                                  status=c["status"]), width="stretch")
+                                                  status="none" if opposite else c["status"]), width="stretch")
         st.caption(f"Source: {c['source']}")
 
 
@@ -215,9 +223,12 @@ def render_tradeoff(n):
     """The price next to the benefit, for the top pick, in one small view."""
     kind = str(n["top"].get("kind") or "?").upper() if n["top"] else "?"
     gain = []
+    measured_first = n["time"] is not None            # the measurement is the headline: show only it
     for part, lower, higher, none_text in (
             (n["cost"], "lower estimated cost", "HIGHER estimated cost (worse)", "no change in estimated cost"),
             (n["time"], "faster (measured)", "SLOWER (measured, worse)", "no change in measured time")):
+        if measured_first and part is n["cost"]:
+            continue
         if part and tradeoff.ok(part["pct"]):
             p = part["pct"]
             gain.append(f"{p:.1f}% {lower}" if p > 0 else none_text if p == 0
@@ -239,11 +250,18 @@ def render_before_after(r):
         st.error("No improvement is shown: every suggested fix returns different results.",
                  icon=":material/dangerous:")
         return
-    left, right = st.columns(2)
-    with left:
-        render_cost_panel(n["cost"])
-    with right:
+    if n["time"] is not None:
+        # A MEASURED time is the headline result, and the 50% target is checked against it.
+        # The planner's estimate moves into a collapsed expander: it can disagree with the stopwatch.
         render_time_panel(n["time"])
+        with st.expander("Planner estimate (can disagree with measured time)"):
+            render_cost_panel(n["cost"], n["time"])
+    else:                                     # nothing measured: cost estimate only, as before
+        left, right = st.columns(2)
+        with left:
+            render_cost_panel(n["cost"])
+        with right:
+            render_time_panel(n["time"])
     render_price_cards(n)
     render_tradeoff(n)
 

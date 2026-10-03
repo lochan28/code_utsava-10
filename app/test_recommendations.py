@@ -183,7 +183,8 @@ def test_page_full_data_shows_every_badge_and_the_strip():
     assert "share of plan cost: **92%**  ·  estimated rows: **1,200,000**" in m
     assert ":gray-badge[:material/search: found by: rule-based check]" in m
     assert any("Masked view" in c.value for c in at.caption)                      # the masked-view label
-    assert [e.label for e in at.expander] == ["Masked execution plan", "Summary and why not the alternatives"]
+    assert [e.label for e in at.expander] == ["Masked execution plan", "Summary and why not the alternatives",
+                                              "Planner estimate (can disagree with measured time)"]
     tree = [c.value for c in at.code if "<== BOTTLENECK" in c.value]
     assert len(tree) == 1 and "Seq Scan on t_a3f" in tree[0].splitlines()[1]      # the right step is marked
     assert any("Summary:" in v for v in m) and any("Why not the alternative:" in v for v in m)

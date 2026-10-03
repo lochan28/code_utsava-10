@@ -85,7 +85,8 @@ def test_question_shows_match_privacy_badge_masked_query_and_plan():
         assert any(v.startswith(":green-badge[") and "0 raw values exposed" in v for v in md)
         assert any("Masked query" in v for v in md)
         assert any(c.value.startswith("SELECT") and T in c.value for c in at.code)       # masked query (real masked name)
-        assert [e.label for e in at.expander] == ["Masked execution plan"]
+        assert [e.label for e in at.expander] == ["Masked execution plan",
+                                                  "Planner estimate (can disagree with measured time)"]
         assert any(f"Seq Scan on {T}" in c.value for c in at.code)                       # plan tree
         # the real table name must not appear anywhere in the masked parts of the page
         masked_parts = [c.value for c in at.code if c.language in ("sql", "text")][:2]
