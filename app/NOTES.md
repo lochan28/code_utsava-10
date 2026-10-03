@@ -70,15 +70,38 @@ logged as ids, sizes, a short hash and the exception TYPE only - never the text 
 - Pasted SQL must be one read-only SELECT with no unknown functions.
 - Text that fails a leak check is never stored in the audit log.
 
-## 7. Tests (run from the project folder; none need a database or Ollama)
+## 7. Before/after numbers on the page (Step 4c) - where each number comes from
+Shown for the **top pick** (first by trust: measured, simulated, rule-only, unverified; never an unsafe one).
+| number | key (contract v2) | source label on the page | notes |
+|---|---|---|---|
+| cost before / after, improvement % | `cost_before`, `cost_after` | planner estimate | improvement is worked out from the two costs. We do NOT use `improvement_pct`: ai/ makes it a TIME drop for rewrites |
+| time before / after | `time_before_ms`, `time_after_ms` (top-level or on a `timed_run` rewrite) | measured | no measured time -> "Not measured, cost estimate only", never an empty chart |
+| write latency | `write_latency_ms` | measured on a sandbox copy | missing -> "not measured", never 0 |
+| storage | `storage_bytes` | planner estimate (HypoPG) | shown in MB (1024*1024); missing -> "not measured". A % needs the table size, which is not in the contract |
+- Result-level numbers describe the pipeline's best fix (the first listed). They are used for the top pick
+  ONLY if the top pick is that first one; otherwise they are not borrowed.
+- A rewrite creates no index, so write latency and storage show "none: a rewrite creates no index" (by design, not a default).
+- PS target: improvement strictly **more than 50%** (`tradeoff.TARGET_PCT`): green check if met, amber if not, red
+  "WORSE" if the number is negative. Cost units and milliseconds are always on separate charts.
+- If every fix is unsafe, only a warning is shown: no numbers, no charts, no green.
+- **Everything on the stubs is fake** (cost 19437 -> 812, 27 -> 3 ms, 0.002 ms, 22,000,000 bytes). The numbers
+  become real when Persons 1 and 3 deliver. Use the sidebar sample (4 variants) to see every state.
+
+## 8. Demo mode and sample data
+- The sidebar sample is OFF by default and can NEVER show while Demo mode is on. Demo mode itself is **not built
+  yet (Step 5)**: it only has to set `st.session_state["demo_mode"] = True` and the guard already works.
+
+## 9. Tests (run from the project folder; none need a database or Ollama)
 ```
 .venv/Scripts/python -m app.test_privacy          # privacy + guard
 .venv/Scripts/python -m app.test_llm_http         # real Ollama call, against a fake server
 .venv/Scripts/python -m app.test_dashboard        # the page (headless)
 .venv/Scripts/python -m app.test_pipeline_hooks   # cost_fn, time_fn, stats, column_types
+.venv/Scripts/python -m app.test_recommendations  # badges, sorting, bottleneck card, sample / demo mode
+.venv/Scripts/python -m app.test_before_after     # charts, 50% target, write / storage, trade-off
 ```
 
-## 8. Asks for other people
+## 10. Asks for other people
 - **Person 3:** `ai/verify.py` must read `results_match` instead of `rows` / `checksum`
   (see section 2, item 3). Also: `stats` now arrives with `eq_sel` already filled in.
 - **Person 1 (db/sandbox.py):** pasted SQL reaches `get_plan()`, `cost()` and `checked_run()`. They

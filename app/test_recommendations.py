@@ -20,6 +20,7 @@ from privacy import mask
 
 DASHBOARD = str(Path(__file__).with_name("dashboard.py"))
 QUESTION = "Why is the weekly sales report slow?"
+TOP_PICK_BADGE = ":green-badge[:material/star: top pick]"      # the badge itself, not the words
 
 
 def _no_ollama(prompt):
@@ -196,7 +197,7 @@ def test_page_sorts_unsafe_last_and_never_calls_it_top_pick():
         "unsafe": ":red-badge[UNSAFE: results differ]"}.items()}
     print(f"      badge positions on the page: {pos}")
     assert pos["measured"] < pos["simulated"] < pos["rule"] < pos["unverified"] < pos["unsafe"]
-    tops = [i for i, v in enumerate(m) if "top pick" in v]
+    tops = [i for i, v in enumerate(m) if v == TOP_PICK_BADGE]
     assert len(tops) == 1 and tops[0] < pos["simulated"], "top pick must be the measured fix"
     actions = [c.value for c in at.code if c.language == "sql"][1:]               # [0] = the masked query
     assert actions[0].startswith("SELECT t_b22.c_1") and actions[-1].startswith("SELECT c_1, COUNT(*)")
@@ -209,7 +210,7 @@ def test_page_unsafe_rewrite_shows_red_and_not_a_green_measured_badge():
     m = md(at)
     assert ":red-badge[UNSAFE: results differ]" in m
     assert ":green-badge[measured]" not in m, "an unsafe rewrite also showed the green 'measured' badge"
-    assert not any("top pick" in v for v in m), "an unsafe rewrite was labelled top pick"
+    assert TOP_PICK_BADGE not in m, "an unsafe rewrite was labelled top pick"
     assert any("No safe fix was found" in e.value for e in at.error)
 
 
@@ -293,6 +294,62 @@ def test_sample_toggle_shows_every_badge_type_with_a_loud_warning():
     for badge in (":green-badge[measured]", ":blue-badge[cost-simulated]", ":gray-badge[rule-based, not simulated]",
                   ":gray-badge[unverified]", ":red-badge[UNSAFE: results differ]"):
         assert badge in m, badge
+
+
+def sample_shown(at):
+    return any(w.value.startswith("SAMPLE DATA") for w in at.warning)
+
+
+def open_page(analyze_returns=None, **state):
+    """Open the dashboard (Ollama off, decoder rigged to explode) with some session state preset.
+    analyze_returns: the result a question gets (the real pipeline would call the decoder itself)."""
+    with ExitStack() as stack:
+        for obj, name, value in [(llm, "start_warmup", lambda: None), (llm, "_call_ollama", _no_ollama),
+                                 (mask, "unmask", _decoder_must_not_run),
+                                 (pipeline, "analyze", lambda q: analyze_returns)]:
+            stack.enter_context(patched(obj, name, value))
+        at = AppTest.from_file(DASHBOARD, default_timeout=30)
+        for k, v in state.items():
+            at.session_state[k] = v
+        at.run()
+        return at, stack.pop_all()           # keep the patches alive for further .run() calls
+
+
+def test_sample_toggle_is_off_by_default():
+    with fresh_audit_log(), patched(llm, "_call_ollama", _no_ollama), patched(llm, "start_warmup", lambda: None):
+        canned = pipeline.analyze(QUESTION)                    # a real (stub) result, no sample data in it
+    at, patches = open_page(analyze_returns=canned)
+    with patches:
+        assert at.sidebar.toggle[0].value is False and not sample_shown(at)
+        at.chat_input[0].set_value(QUESTION).run()            # a real question does not switch it on
+        assert not at.exception
+        assert at.sidebar.toggle[0].value is False and not sample_shown(at)
+        assert ":red-badge[UNSAFE: results differ]" not in md(at)     # nothing sample-like on the page
+        at.sidebar.toggle[0].set_value(True).run()            # only the person switching it on shows it
+        assert sample_shown(at) and ":red-badge[UNSAFE: results differ]" in md(at)
+
+
+def test_sample_data_can_never_show_while_demo_mode_is_on():
+    # 1) demo mode on from the start, even with the sample switch forced on
+    at, patches = open_page(demo_mode=True, show_sample=True)
+    with patches:
+        assert not at.exception and not sample_shown(at)
+        assert ":red-badge[UNSAFE: results differ]" not in md(at)
+        assert at.sidebar.toggle[0].disabled is True                      # the switch is greyed out
+    # 2) demo mode switched on WHILE the sample is on screen: it disappears at once
+    at, patches = open_page()
+    with patches:
+        at.sidebar.toggle[0].set_value(True).run()
+        assert sample_shown(at)
+        at.session_state["demo_mode"] = True
+        at.run()
+        assert not at.exception and not sample_shown(at), "sample data stayed visible in demo mode"
+        assert ":red-badge[UNSAFE: results differ]" not in md(at)
+        # 3) and back off again: the switch is usable, sample not shown until asked for
+        at.session_state["demo_mode"] = False
+        at.session_state["show_sample"] = False
+        at.run()
+        assert at.sidebar.toggle[0].disabled is False and not sample_shown(at)
 
 
 def run_all():

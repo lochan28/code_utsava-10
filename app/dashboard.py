@@ -14,7 +14,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # so "import pipeline" works
 import pipeline  # noqa: E402
-from app import llm, sample_data  # noqa: E402
+from app import charts, llm, sample_data, tradeoff  # noqa: E402
 from app.ui_helpers import (  # noqa: E402
     ai_inputs_line, bottleneck_items, bottleneck_node_id, confidence_counts, confidence_strip,
     evidence_items, match_line, md_safe, novelty_badge, plan_tree_text, sort_recommendations,
@@ -144,6 +144,111 @@ def render_recommendations(recs, ai_inputs):
 
 
 # ------------------------------------------------------------------
+# Before / after: charts, the 50% target, and the price of the fix
+# ------------------------------------------------------------------
+def target_marker(status, worse_text):
+    """The PS target (more than 50% improvement): green check if met, amber if not, red if worse."""
+    target = f"{tradeoff.TARGET_PCT:.0f}%"
+    if status == "met":
+        st.success(f"Meets the target: more than {target} improvement.", icon=":material/check_circle:")
+    elif status == "below":
+        st.warning(f"Below the {target} target.", icon=":material/info:")
+    elif status == "none":
+        st.warning("No improvement.", icon=":material/info:")
+    elif status == "worse":
+        st.error(worse_text, icon=":material/trending_down:")
+    else:
+        st.info("Improvement could not be worked out.")
+
+
+def render_cost_panel(c):
+    with st.container(border=True):
+        st.markdown("**Planner cost** · the planner's estimate, not a stopwatch")
+        if c is None:
+            st.info(f"Cost: {tradeoff.NOT_MEASURED}. No before/after cost numbers for the top pick.")
+            return
+        st.metric("Estimated cost improvement", tradeoff.fmt_pct(c["pct"]))
+        target_marker(c["status"], "WORSE: this fix is estimated to make the query MORE expensive.")
+        st.altair_chart(charts.before_after_chart(c["before"], c["after"], "planner cost units (estimate)",
+                                                  status=c["status"]), width="stretch")
+        st.caption(f"Source: {c['source']}")
+
+
+def render_time_panel(t):
+    with st.container(border=True):
+        st.markdown("**Execution time** · measured on a sandbox copy")
+        if t is None:
+            st.info("Not measured, cost estimate only.")      # never an empty chart
+            return
+        st.metric("Measured time improvement", tradeoff.fmt_pct(t["pct"]))
+        target_marker(t["status"], "WORSE: this fix made the query SLOWER when measured.")
+        st.altair_chart(charts.before_after_chart(t["before"], t["after"], "measured milliseconds",
+                                                  status=t["status"], label_format=",.1f"),
+                        width="stretch")
+        st.caption(f"{tradeoff.fmt_ms(t['before'])} → {tradeoff.fmt_ms(t['after'])} · Source: {t['source']}")
+
+
+def render_price_cards(n):
+    """What the fix costs: write latency and storage, each with its source. A missing number
+    is shown as 'not measured', never as 0."""
+    st.markdown("#### What the fix costs")
+    c_write, c_storage = st.columns(2)
+    with c_write, st.container(border=True):
+        if n["write_note"]:
+            st.metric("Write latency", "none")
+            st.caption(n["write_note"])
+        else:
+            st.metric("Write latency", tradeoff.fmt_write(n["write"]))
+            st.caption(f"Source: {tradeoff.SOURCE_MEASURED} on a sandbox copy" if tradeoff.ok(n["write"])
+                       else f"Source: {tradeoff.SOURCE_NONE}")
+    with c_storage, st.container(border=True):
+        if n["storage_note"]:
+            st.metric("Extra storage", "none")
+            st.caption(n["storage_note"])
+        else:
+            st.metric("Extra storage", tradeoff.fmt_storage(n["storage"]))
+            st.caption(f"Source: {tradeoff.SOURCE_ESTIMATE} (HypoPG)" if tradeoff.ok(n["storage"])
+                       else f"Source: {tradeoff.SOURCE_NONE}")
+
+
+def render_tradeoff(n):
+    """The price next to the benefit, for the top pick, in one small view."""
+    kind = str(n["top"].get("kind") or "?").upper() if n["top"] else "?"
+    gain = []
+    for part, lower, higher, none_text in (
+            (n["cost"], "lower estimated cost", "HIGHER estimated cost (worse)", "no change in estimated cost"),
+            (n["time"], "faster (measured)", "SLOWER (measured, worse)", "no change in measured time")):
+        if part and tradeoff.ok(part["pct"]):
+            p = part["pct"]
+            gain.append(f"{p:.1f}% {lower}" if p > 0 else none_text if p == 0
+                        else f":red[{abs(p):.1f}% {higher}]")
+    write = n["write_note"] or tradeoff.fmt_write(n["write"])
+    storage = n["storage_note"] or tradeoff.fmt_storage(n["storage"])
+    with st.container(border=True):
+        st.markdown(f"**Trade-off for the top pick ({md_safe(kind)})**: what you gain and what you pay")
+        g, w, s = st.columns(3)
+        g.markdown("**You gain**  \n" + ("  \n".join(gain) if gain else tradeoff.NOT_MEASURED))
+        w.markdown("**You pay in writes**  \n" + md_safe(write))
+        s.markdown("**You pay in storage**  \n" + md_safe(storage))
+
+
+def render_before_after(r):
+    n = tradeoff.resolve(r)
+    st.markdown("#### Before and after")
+    if n["no_safe"]:        # no celebration: only the warning
+        st.error("No improvement is shown: every suggested fix returns different results.",
+                 icon=":material/dangerous:")
+        return
+    left, right = st.columns(2)
+    with left:
+        render_cost_panel(n["cost"])
+    with right:
+        render_time_panel(n["time"])
+    render_price_cards(n)
+    render_tradeoff(n)
+
+
+# ------------------------------------------------------------------
 # One analysis, shown inside an assistant chat message
 # ------------------------------------------------------------------
 def render_result(r):
@@ -165,12 +270,11 @@ def render_result(r):
                 language="text")
         st.json(r.get("masked_plan") or {}, expanded=False)
     render_recommendations(r.get("recommendations"), r.get("ai_inputs"))
+    render_before_after(r)
 
-    # --- TEMPORARY: replaced by 4c (charts) and 4d (Approve). The un-masked deploy_sql is
-    # --- deliberately NOT shown here any more: it belongs to the Approve step only.
-    if isinstance(r.get("cost_after"), (int, float)) and isinstance(r.get("improvement_pct"), (int, float)):
-        st.metric("Planner cost", f"{r['cost_after']:,.0f}", f"-{r['improvement_pct']}%")
+    # The un-masked deploy_sql is deliberately NOT shown here: it belongs to the Approve step (4d).
     if r.get("explanation"):
+        st.markdown("#### Explanation")
         st.markdown(md_safe(r["explanation"]))
 
 
@@ -191,18 +295,27 @@ if question:
             entry["error"] = str(e)
     st.session_state.history.append(entry)
 
+# Sample data is for looking at the layout only. It is OFF by default, and it can NEVER show
+# while Demo mode is on (Demo mode is for the real demo: no made-up numbers allowed).
+# Step 5 adds the Demo mode switch; it only has to set st.session_state["demo_mode"].
+DEMO_MODE_KEY = "demo_mode"
+demo_mode = bool(st.session_state.get(DEMO_MODE_KEY))
 with st.sidebar:
-    st.toggle("Show sample result (every badge type)", key="show_sample",
-              help="Made-up data for checking the layout. Not a real analysis.")
+    st.toggle("Show sample result (every badge type)", key="show_sample", value=False,
+              disabled=demo_mode,
+              help="Turned off while Demo mode is on." if demo_mode
+              else "Made-up data for checking the layout. Not a real analysis.")
 
 if not st.session_state.history:
     st.info("Ask a question to begin, for example: *Why is the weekly sales report slow?*")
 
-if st.session_state.get("show_sample"):
+if st.session_state.get("show_sample") and not demo_mode:      # the guard: checked at render time
+    with st.sidebar:
+        variant = st.radio("Sample variant", sample_data.VARIANTS, key="sample_variant")
     with st.chat_message("assistant"):
         st.warning("SAMPLE DATA: made-up numbers that show every badge type. Not a real analysis.",
                    icon=":material/science:")
-        render_result(sample_data.demo_result())
+        render_result(sample_data.demo_result(variant))
 
 for entry in st.session_state.history:
     with st.chat_message("user"):

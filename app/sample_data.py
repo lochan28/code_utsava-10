@@ -52,9 +52,19 @@ SAMPLE_RECOMMENDATIONS = [
 ]
 
 
-def demo_result():
+# The sample comes in several variants so every state of the before/after view can be seen.
+VARIANTS = ["Rewrite on top (measured)",
+            "Index on top (with write and storage cost)",
+            "Fix makes things worse",
+            "Only unsafe fixes"]
+
+_SIMULATED_INDEX = SAMPLE_RECOMMENDATIONS[3]
+_UNSAFE_REWRITE = SAMPLE_RECOMMENDATIONS[0]
+
+
+def demo_result(variant=VARIANTS[0]):
     """A full analyze()-shaped result built from the sample pieces."""
-    return {
+    r = {
         "query_id": "sample", "match": None, "leak_check": True,
         "masked_query": "SELECT c_1, SUM(c_9) FROM t_a3f WHERE c_5 > $1 AND c_91b = $2 GROUP BY c_1",
         "masked_plan": SAMPLE_PLAN, "bitmask": {"filter": "0110", "join": "1001", "group": "0001"},
@@ -64,11 +74,29 @@ def demo_result():
         "ai_inputs": {"time_fn": "used", "stats": "not available yet", "column_types": "not available yet"},
         "unsafe_rewrite": True,
     }
+    if variant == VARIANTS[1]:       # an index on top: it has a real write and storage price
+        r["recommendations"] = [dict(_SIMULATED_INDEX), SAMPLE_RECOMMENDATIONS[1], SAMPLE_RECOMMENDATIONS[2]]
+        r.update(time_before_ms=418.0, time_after_ms=118.0,            # the winner, timed on a sandbox copy
+                 write_latency_ms=0.35, storage_bytes=22_000_000, unsafe_rewrite=False,
+                 explanation="(sample) The filter columns have no index. The index is much faster "
+                             "but every insert pays a little and the index takes space.")
+    elif variant == VARIANTS[2]:     # an honest bad result
+        worse = {**_SIMULATED_INDEX, "cost_before": 1000.0, "cost_after": 1300.0, "improvement_pct": -30.0,
+                 "reason": "The planner expects this index to be used, but it makes the query dearer."}
+        r["recommendations"] = [worse]
+        r.update(cost_before=1000.0, cost_after=1300.0, improvement_pct=-30.0, time_before_ms=100.0,
+                 time_after_ms=140.0, write_latency_ms=0.9, storage_bytes=5_500_000, unsafe_rewrite=False,
+                 explanation="(sample) This fix is estimated to make the query slower.")
+    elif variant == VARIANTS[3]:     # nothing safe: no good news may be shown
+        r["recommendations"] = [dict(_UNSAFE_REWRITE)]
+        r.update(explanation="(sample) The only rewrite found returns different rows.")
+    return r
 
 
 if __name__ == "__main__":
     from app.ui_helpers import confidence_counts, confidence_strip, sort_recommendations, verified_badge
-    r = demo_result()
-    for rec in sort_recommendations(r["recommendations"]):
-        print(f"{rec['kind']:10} {verified_badge(rec)}")
-    print(confidence_strip(confidence_counts(r["recommendations"])))
+    for v in VARIANTS:
+        r = demo_result(v)
+        print(f"{v}: {confidence_strip(confidence_counts(r['recommendations']))}")
+    for rec in sort_recommendations(demo_result()["recommendations"]):
+        print(f"   {rec['kind']:10} {verified_badge(rec)}")
