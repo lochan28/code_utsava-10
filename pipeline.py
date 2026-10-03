@@ -325,6 +325,21 @@ def _complete_stats(stats):
     return out
 
 
+PROSE_FIELDS = ("reason", "summary", "timing_note", "rejected_fixes", "warning", "verify_note")
+
+
+def _split_prose(masked_result):
+    """(the payload without the prose fields of its recommendations, all that prose as one text)."""
+    texts, recs = [], []
+    for rec in masked_result.get("recommendations") or []:
+        if not isinstance(rec, dict):
+            recs.append(rec)
+            continue
+        texts += [t for k in PROSE_FIELDS for t in _all_strings(rec.get(k))]
+        recs.append({k: v for k, v in rec.items() if k not in PROSE_FIELDS})
+    return {**masked_result, "recommendations": recs}, " ".join(texts)
+
+
 def _all_strings(value):
     """Every dict KEY and every text value inside `value`. The masker's JSON check reads only
     VALUES, but stats and column_types carry their names in their KEYS."""
@@ -497,7 +512,12 @@ def analyze(question):
     explanation = llm_out["text"]
 
     # Everything the AI saw or produced must be free of real names/values.
-    leak_check = (mask.verify_no_leak(json.dumps(masked_result), mapping)
+    # Prose that ai/ writes inside a recommendation ("simulated cost 85,864 -> 3,219") is checked like the
+    # explanation (free_text=True): the strict JSON check would flag a standalone "3" in it whenever the
+    # query has the literal 3. Everything else in the payload stays strict.
+    structure, prose = _split_prose(masked_result)
+    leak_check = (mask.verify_no_leak(json.dumps(structure), mapping)
+                  and mask.verify_no_leak(prose, mapping, free_text=True)
                   and mask.verify_no_leak(explanation, mapping, free_text=True))
 
     # ---- back on the real side: un-mask only for the admin's screen ----

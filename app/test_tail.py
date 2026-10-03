@@ -103,6 +103,17 @@ def test_approve_script_for_a_combined_fix_has_the_partition_as_comments_and_the
     assert all(x.startswith("--") for x in pure.splitlines()[pure.splitlines().index("BEGIN;") + 1:-1])
 
 
+def test_prose_in_a_recommendation_may_contain_a_number_equal_to_a_query_literal_but_nothing_real():
+    """The weekly report query has the literal 3. ai/'s reason text says "... -> 3,219": not a leak.
+    The same prose with an email in it IS a leak, and so is a real value in a structural field."""
+    ok, _ = run_with([rec("index", INDEX_M, reason="Simulated cost 85,864 -> 3,219 (96.3% lower).")])
+    assert ok["leak_check"] is True
+    bad, _ = run_with([rec("index", INDEX_M, reason="Ask zz_marker_77@example.com about it.")])
+    assert bad["leak_check"] is False
+    bad, _ = run_with([rec("index", INDEX_M, reason="r", verified_by="small_business")])
+    assert bad["leak_check"] is False                        # a real value in a structural field stays strict
+
+
 def run_all():
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     failed = 0
