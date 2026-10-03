@@ -20,12 +20,15 @@ How it works, simply:
 Self-test (train on fake variants, test on held-out query shapes):
     .venv/Scripts/python -m ai.rl
 """
+import ast
+import json
 import random
 import time
 from collections import defaultdict
+from pathlib import Path
 
 from ai import candidates as cand_mod
-from ai import sqlinfo
+from ai import sqlinfo, verify, why_not
 
 # ============================================================
 # TUNABLE SETTINGS
@@ -175,8 +178,9 @@ def evaluate(masked_sql, c, cost_fn, before=None):
 class BanditAgent:
     def __init__(self, seed=SEED):
         self.rng = random.Random(seed)
-        # Five levels of the lookup table, most specific first: [sum of rewards, tries]
+        # Six levels of the lookup table, most specific first: [sum of rewards, tries]
         self.levels = [defaultdict(lambda: [0.0, 0]) for _ in range(6)]
+        self.seen_states = set()     # query shapes met in training (for the novelty tag)
 
     @staticmethod
     def _keys(s, a):
@@ -206,6 +210,7 @@ class BanditAgent:
         return est
 
     def update(self, s, a, reward):
+        self.seen_states.add(s)
         for table, key in zip(self.levels, self._keys(s, a)):
             table[key][0] += reward
             table[key][1] += 1
@@ -264,6 +269,22 @@ class BanditAgent:
         best = max(tried, key=lambda t: (t[2], -write_width(t[0])))
         return best[0], before, best[1], best[2], 1 + len(tried)
 
+    # --- persistence: the pipeline loads a trained agent instead of retraining ---
+    def save(self, path):
+        data = {"levels": [[[repr(k), v[0], v[1]] for k, v in lv.items()] for lv in self.levels],
+                "seen_states": [repr(x) for x in sorted(self.seen_states)]}
+        Path(path).write_text(json.dumps(data), encoding="utf-8")
+
+    @classmethod
+    def load(cls, path):
+        agent = cls()
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        for lv, rows in zip(agent.levels, data["levels"]):
+            for k, total, n in rows:
+                lv[ast.literal_eval(k)] = [total, n]
+        agent.seen_states = {ast.literal_eval(x) for x in data["seen_states"]}
+        return agent
+
 
 # ------------------------------------------------------------
 # Baselines for comparison
@@ -283,12 +304,124 @@ def index_every_filter_column(masked_sql, existing_indexes=None):
     return {"kind": "index", "sqls": sqls, "cols": cols, "why": "baseline"}
 
 
-def recommend(masked_sql, masked_plan, cost_fn):
-    # STUB until step 7: wired to the trained agent there.
-    action = "CREATE INDEX ON t_a3f (c_91b, c_d42)"
-    before, after = cost_fn(masked_sql, []), cost_fn(masked_sql, [action])
-    return [{"kind": "index", "action": action, "cost_before": before, "cost_after": after,
-             "reason": "Filter columns c_91b, c_d42 have no index."}]
+AGENT_PATH = Path(__file__).with_name("rl_agent.json")
+NOVELTY_SEEN = "seen query shape"
+NOVELTY_UNSEEN = "unseen shape (lower confidence)"
+
+
+def load_agent():
+    """The trained agent if one was saved, otherwise an untrained one (then every query
+    is 'unseen' and the ranking relies on the top-k simulation)."""
+    return BanditAgent.load(AGENT_PATH) if AGENT_PATH.exists() else BanditAgent()
+
+
+def stats_from_plan(masked_plan):
+    """Rough stats when the caller has none: rows per table from the plan's scan
+    estimates (these are AFTER filters, so tables look smaller than they are).
+    The pipeline should pass real masked stats (table sizes, distinct counts)."""
+    rows = {}
+
+    def walk(n):
+        rel = n.get("Relation Name")
+        if rel:
+            rows[rel] = max(rows.get(rel, 0), n.get("Plan Rows", 0))
+        for k in n.get("Plans", []):
+            walk(k)
+
+    if masked_plan and "Plan" in masked_plan:
+        walk(masked_plan["Plan"])
+    return {"rows": rows, "eq_sel": {}, "range_sel": {}, "existing_indexes": []}
+
+
+def recommend(masked_sql, masked_plan, cost_fn, stats=None, time_fn=None, agent=None,
+              column_types=None, k=VERIFY_TOP_K):
+    """Ranked, verified recommendations for one masked query (CLAUDE.md contract).
+
+    Contract keys per item: kind, action, cost_before, cost_after, reason.
+    Added keys: improvement_pct, reward, write_penalty, verified_by
+    ("hypopg_cost" | "timed_run" | "rule_only"), novelty, agent_score, and for
+    rewrites same_results / time_before_ms / time_after_ms / speedup / verify_note.
+    The first item also carries why_not: one sentence on the best REJECTED option.
+    Optional: stats (masked table stats), time_fn (see ai/verify.py), agent."""
+    agent = agent or load_agent()
+    stats = stats or stats_from_plan(masked_plan)
+    try:
+        info = sqlinfo.analyze(masked_sql, column_types)
+    except sqlinfo.sqlglot.errors.ParseError:
+        # e.g. the privacy STUB returns "SELECT ..." - say so instead of crashing the pipeline
+        before = cost_fn(masked_sql, [])
+        return [{"kind": "none", "action": "", "cost_before": before, "cost_after": before,
+                 "improvement_pct": 0.0, "reward": None, "write_penalty": 0.0, "verified_by": "rule_only",
+                 "novelty": NOVELTY_UNSEEN, "agent_score": None,
+                 "reason": "The masked SQL could not be parsed, so no fix was analysed."}]
+    pairs = sqlinfo.join_pairs(masked_sql)
+    s, ranked = agent.rank(masked_sql, stats, column_types)
+    if not ranked:
+        return []
+    novelty = NOVELTY_SEEN if s in agent.seen_states else NOVELTY_UNSEEN
+    before = cost_fn(masked_sql, [])
+
+    tried = []
+    for score, c, _ in ranked[:max(1, k)]:
+        rec = {"kind": c["kind"], "action": "; ".join(c["sqls"]) if c["kind"] != "rewrite" else c["sqls"][0],
+               "cost_before": before, "novelty": novelty, "agent_score": round(score, 3),
+               "write_penalty": round(WRITE_PENALTY_PER_COL * write_width(c), 3)}
+        measured = None
+        if c["kind"] == "rewrite":
+            v = verify.verify_rewrite(masked_sql, c["sqls"][0], time_fn)
+            after = cost_fn(c["sqls"][0], [])
+            if v["verified_by"] == "timed_run":
+                drop = (1 - 1 / v["speedup"]) if v["same_results"] else -1.0
+            else:
+                drop = max(-1.0, (before - after) / before) if before else 0.0
+            rec.update({"cost_after": after, "verified_by": v["verified_by"], "same_results": v["same_results"],
+                        "time_before_ms": v["time_before_ms"], "time_after_ms": v["time_after_ms"],
+                        "speedup": v["speedup"], "verify_note": v["note"]})
+            reward = drop
+            measured = v
+            rec["reason"] = f"{c['why']} {v['note'].capitalize()}."
+            if v["verified_by"] == "rule_only":
+                rec["reason"] += f" Planner estimate: {before:,.0f} -> {after:,.0f}."
+        else:
+            try:
+                _, after, reward = evaluate(masked_sql, c, cost_fn, before)
+                drop = max(0.0, (before - after) / before) if before else 0.0
+                rec["verified_by"] = "hypopg_cost"
+                rec["reason"] = (f"{c['why'][:1].upper()}{c['why'][1:]}: simulated cost {before:,.0f} -> "
+                                 f"{after:,.0f} ({100 * drop:.1f}% lower).")
+            except ValueError:          # cost_fn can't simulate this kind (e.g. partitions today)
+                after, drop, reward = before, 0.0, None
+                rec["verified_by"] = "rule_only"
+                rec["reason"] = f"{c['why'][:1].upper()}{c['why'][1:]}. Not simulated (no sandbox support yet)."
+            rec["cost_after"] = after
+            measured = None if reward is None else {"drop": drop, "reward": reward}   # None = not simulated
+        rec["improvement_pct"] = round(100 * drop, 1)
+        rec["reward"] = None if reward is None else round(reward, 3)
+        tried.append((rec, c, measured))
+
+    def sort_key(t):
+        rec = t[0]
+        rejected = rec.get("same_results") is False
+        return (rejected, rec["reward"] is None, -(rec["reward"] or 0.0), rec["write_penalty"])
+
+    tried.sort(key=sort_key)
+    # Recommend only what helps: drop wrong-result rewrites and anything measured as no better.
+    # Unsimulated (rule_only) options stay, clearly flagged, so the admin still sees them.
+    recs = [t[0] for t in tried if t[0].get("same_results") is not False
+            and (t[0]["verified_by"] == "rule_only" or t[0]["improvement_pct"] > 0)]
+    if not recs:
+        return []
+    # best rejected = the next-best option we tried, else the top one we never simulated
+    chosen_drop = recs[0]["improvement_pct"] / 100
+    rejected = [t for t in tried if t[0] is not recs[0]]
+    if rejected:
+        _, c, measured = rejected[0]
+    else:
+        c, measured = ranked[k][1] if len(ranked) > k else None, None
+    if c is not None:
+        chosen = None if recs[0]["verified_by"] == "rule_only" else {"drop": chosen_drop, "label": recs[0]["action"]}
+        recs[0]["why_not"] = why_not.why_not(c, info, stats, measured, chosen, pairs)
+    return recs
 
 
 if __name__ == "__main__":

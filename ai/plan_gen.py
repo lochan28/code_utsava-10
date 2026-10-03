@@ -26,8 +26,9 @@ import random
 # TUNABLE SETTINGS
 # ============================================================
 SEED = 11
-PLANS_PER_SHAPE = 18          # 11 shapes x 18 = 198 plans
-TEST_SHAPES = {"hash_join3", "nl_seq_inner_agg", "merge_join", "bitmap"}  # held out whole
+PLANS_PER_SHAPE = 18          # 17 shapes x 18 = 306 plans
+TEST_SHAPES = {"hash_join3", "nl_seq_inner_agg", "merge_join", "bitmap",
+               "gather_merge_sort", "correlated_sub_agg"}             # held out whole
 WITH_ACTUALS_P = 0.4          # Share of plans that also carry actual row counts (EXPLAIN ANALYZE)
 MISESTIMATE_P = 0.35          # Of those, share where one scan is badly misestimated
 MISESTIMATE_RANGE = (50, 2000)  # Actual rows = estimate x this factor
@@ -177,13 +178,55 @@ def make_shape(shape, g, r):
         heap = g.wrap("Bitmap Heap Scan", [bix], rows * 0.4, rows, **{"Relation Name": g.name("t"),
                                                                        "_table_rows": big})
         root = g.aggregate(heap, 1, "Plain")
+    elif shape == "limit_sort":
+        root = g.wrap("Limit", [g.sort(g.seq_scan(big, sel))], 0.01, 10, ["Outer"])
+    elif shape == "index_only_agg":
+        rows = int(big * 10 ** r.uniform(-4, -1))
+        io = {"Node Type": "Index Only Scan", "Relation Name": g.name("t"), "Index Name": g.name("i"),
+              "Startup Cost": 0.4, "Total Cost": round(rows * 0.05 + 5, 2), "Plan Rows": rows,
+              "Index Cond": f"({g.name('c')} >= $1)"}
+        root = g.aggregate(io, int(10 ** r.uniform(0, 3)))
+    elif shape == "gather_merge_sort":
+        scan = g.seq_scan(big, sel, parallel=True)
+        srt = g.sort(scan)
+        root = g.wrap("Gather Merge", [srt], srt["Plan Rows"] * 0.02, srt["Plan Rows"] * 3, ["Outer"],
+                      **{"Workers Planned": 2})
+    elif shape == "materialize_nl":
+        outer = g.seq_scan(mid, 10 ** r.uniform(-2, -0.5))
+        inner = g.seq_scan(small, 1.0)
+        mat = g.wrap("Materialize", [inner], inner["Plan Rows"] * 0.01, inner["Plan Rows"], ["Outer"])
+        mat["Parent Relationship"] = "Inner"
+        # Materialize: inner is computed ONCE, then re-read cheaply - so NOT a repeated-scan case
+        pairs = outer["Plan Rows"] * inner["Plan Rows"]
+        root = {"Node Type": "Nested Loop", "Startup Cost": 0.0, "Plan Rows": max(1, int(pairs * 0.01)),
+                "Total Cost": round(outer["Total Cost"] + mat["Total Cost"] + pairs * 0.0025, 2),
+                "Plans": [outer, mat], "Join Filter": f"({g.name('c')} = {g.name('c')})"}
+        outer["Parent Relationship"] = "Outer"
+    elif shape == "nl_seq_inner_join":
+        outer = g.seq_scan(mid, 10 ** r.uniform(-2.5, -1))
+        inner = g.seq_scan(mid, 10 ** r.uniform(-3, -1.5))
+        nl = g.nested_loop(outer, inner, outer["Plan Rows"])
+        root = g.hash_join(g.seq_scan(big, sel), nl, big * sel)
+        override = ("repeated_inner", inner)
+    elif shape == "correlated_sub_agg":
+        outer = g.seq_scan(mid, 10 ** r.uniform(-3, -1.5))
+        sub_scan = g.seq_scan(big, 10 ** r.uniform(-5, -3))
+        sub = g.aggregate(sub_scan, 1, "Plain")
+        sub["Parent Relationship"] = "SubPlan"
+        sub["Subplan Name"] = "SubPlan 1"
+        outer["Plans"] = [sub]
+        outer["Total Cost"] = round(outer["Total Cost"] + outer["Plan Rows"] * sub["Total Cost"], 2)
+        root = g.sort(g.aggregate(outer, int(outer["Plan Rows"] / 3) + 1))
+        override = ("correlated_sub", sub_scan)
     else:
         raise ValueError(shape)
     return root, override
 
 
 SHAPES = ["seq_filter", "sort_scan", "hash_join2", "hash_join3", "nl_index", "nl_seq_inner",
-          "nl_seq_inner_agg", "correlated_sub", "merge_join", "parallel", "bitmap"]
+          "nl_seq_inner_agg", "correlated_sub", "merge_join", "parallel", "bitmap",
+          "limit_sort", "index_only_agg", "gather_merge_sort", "materialize_nl", "nl_seq_inner_join",
+          "correlated_sub_agg"]
 
 
 def make_plans(seed=SEED):

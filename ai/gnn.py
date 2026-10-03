@@ -8,8 +8,16 @@ How it works, simply:
   - Each node gets numbers describing it: what kind of step it is, how many rows,
     its total cost, its OWN cost (minus its children), and - when the plan was
     run with ANALYZE - how wrong the planner's row estimate was.
-  - A tiny 2-layer graph network (GCN) lets every node "look at" its neighbours
-    twice, then scores each node; the highest score is the bottleneck.
+  - Score of a node = the BASELINE score (its share of the plan's self cost) plus a
+    small CORRECTION from a 2-layer graph network (GCN) that looks at the node's
+    neighbours. The correction starts at zero and is penalised, so on ordinary plans
+    the answer stays "highest self cost"; it only moves for repeated inner scans and
+    misestimated rows.
+  - Three paths, always reported in the output ("path"):
+      gnn           the model passed validation (held-out normal plans >= baseline)
+      gated_hybrid  model not validated: baseline, except the GNN may pick a node the
+                    plain rules flag as special, if it is >= GATE_CONFIDENCE sure
+      rules         no trained weights: baseline + two plain if-check overrides
   - The reason sentence is built from the evidence numbers, no LLM.
 
 Baseline it must match: "pick the node with the highest self cost".
@@ -36,7 +44,12 @@ EPOCHS = 300           # Training passes over all training plans. ~seconds on GP
 LEARNING_RATE = 0.01
 BATCH_SIZE = 32
 WEIGHT_DECAY = 1e-4    # Small penalty on big weights; helps it generalise to unseen shapes.
-MISESTIMATE_FLAG = 50  # Reason text mentions the row estimate when actual/estimate >= this.
+MISESTIMATE_FLAG = 50  # Rows actual/estimate >= this counts as a badly misestimated step
+                       # (used by the reason text and by the plain-rule override).
+CORRECTION_L2 = 0.01   # Penalty on the GNN's correction to the baseline score. Higher = sticks
+                       # closer to "highest self cost"; 0 = free to override anything.
+GATE_CONFIDENCE = 0.8  # Gated hybrid: the GNN may override the baseline only when it is at
+                       # least this sure AND its pick is a rule-flagged special case.
 
 # ============================================================
 # FIXED SETTINGS - feature layout (changing these invalidates saved weights)
@@ -66,7 +79,8 @@ def flatten(masked_plan):
         repeated = 0.0
         outer_rows = next((k["Plan Rows"] for k in kids if k.get("Parent Relationship") == "Outer"), 1)
         for k in kids:
-            if n["Node Type"] == "Nested Loop" and k.get("Parent Relationship") == "Inner":
+            if (n["Node Type"] == "Nested Loop" and k.get("Parent Relationship") == "Inner"
+                    and k["Node Type"] != "Materialize"):      # Materialize: computed once, re-read
                 repeated += (outer_rows - 1) * k["Total Cost"]
             elif k.get("Parent Relationship") == "SubPlan":
                 repeated += (n["Plan Rows"] - 1) * k["Total Cost"]
@@ -74,7 +88,7 @@ def flatten(masked_plan):
                       "true_self": max(0.0, naive_self - repeated), "loops": loops})
         for k in kids:
             rel = k.get("Parent Relationship")
-            if n["Node Type"] == "Nested Loop" and rel == "Inner":
+            if n["Node Type"] == "Nested Loop" and rel == "Inner" and k["Node Type"] != "Materialize":
                 k_loops = loops * max(1, outer_rows)
             elif rel == "SubPlan":
                 k_loops = loops * max(1, n["Plan Rows"])
@@ -117,7 +131,9 @@ def to_graph(masked_plan, label=None):
     edges = [[x["id"], x["parent"]] for x in nodes if x["parent"] is not None]
     edge_index = torch.tensor(edges + [[b, a] for a, b in edges], dtype=torch.long).t().contiguous() \
         if edges else torch.zeros((2, 0), dtype=torch.long)
-    data = Data(x=torch.tensor(feats, dtype=torch.float), edge_index=edge_index)
+    share = [min(1 - 1e-6, max(1e-6, x["naive_self"] / root_cost)) for x in nodes]
+    data = Data(x=torch.tensor(feats, dtype=torch.float), edge_index=edge_index,
+                base=torch.tensor([math.log(v / (1 - v)) for v in share], dtype=torch.float))
     if label is not None:
         data.y = torch.tensor([label])
     return data
@@ -127,23 +143,30 @@ def to_graph(masked_plan, label=None):
 # The model
 # ------------------------------------------------------------
 class BottleneckGCN(torch.nn.Module):
+    """score = logit(self-cost share)  [the baseline]  +  correction  [the GCN]."""
+
     def __init__(self, hidden=HIDDEN):
         super().__init__()
         self.conv1 = GCNConv(N_FEATURES, hidden)
         self.conv2 = GCNConv(hidden, hidden)
         self.head = torch.nn.Linear(hidden + N_FEATURES, 1)   # also sees the raw features
+        torch.nn.init.zeros_(self.head.weight)               # correction starts at exactly 0
+        torch.nn.init.zeros_(self.head.bias)
 
-    def forward(self, data):
+    def correction(self, data):
         h = torch.relu(self.conv1(data.x, data.edge_index))
         h = torch.relu(self.conv2(h, data.edge_index))
-        return self.head(torch.cat([h, data.x], dim=1)).squeeze(-1)   # one score per node
+        return self.head(torch.cat([h, data.x], dim=1)).squeeze(-1)
+
+    def forward(self, data):
+        return data.base + self.correction(data)            # one score per node
 
 
 def _batch_loss(model, batch):
-    scores = model(batch)
-    prob = softmax(scores, batch.batch)                 # softmax within each plan
+    corr = model.correction(batch)
+    prob = softmax(batch.base + corr, batch.batch)      # softmax within each plan
     target = batch.ptr[:-1] + batch.y                   # label node's index in the batch
-    return -torch.log(prob[target] + 1e-9).mean()
+    return -torch.log(prob[target] + 1e-9).mean() + CORRECTION_L2 * (corr ** 2).mean()
 
 
 def train(plans, epochs=EPOCHS, seed=SEED, verbose=False):
@@ -171,25 +194,64 @@ def train(plans, epochs=EPOCHS, seed=SEED, verbose=False):
 
 
 @torch.no_grad()
-def predict(model, masked_plan):
+def predict(model, masked_plan, with_prob=False):
     data = to_graph(masked_plan).to(DEVICE)
-    return int(model(Batch.from_data_list([data])).argmax())
+    prob = torch.softmax(model(Batch.from_data_list([data])), 0)
+    i = int(prob.argmax())
+    return (i, float(prob[i])) if with_prob else i
+
+
+# ------------------------------------------------------------
+# Plain rules (no learning): the two known blind spots of the baseline
+# ------------------------------------------------------------
+def special_nodes(masked_plan):
+    """Node ids the plain rules flag: badly misestimated scans, and Seq Scans that
+    really run many times (inner of a Nested Loop, or inside a correlated SubPlan)."""
+    nodes = flatten(masked_plan)
+    mis = [x for x in nodes if "Scan" in x["node"]["Node Type"] and x["ratio"] is not None
+           and x["ratio"] >= MISESTIMATE_FLAG]
+    repeated = [x for x in nodes if x["node"]["Node Type"] == "Seq Scan" and x["loops"] > 1]
+    return mis, repeated
+
+
+def rules_pick(masked_plan):
+    """Baseline + two if-checks. Misestimate wins first (the costs above it are wrong),
+    then a repeated Seq Scan if its REAL cost (cost x loops) beats the baseline pick."""
+    nodes = flatten(masked_plan)
+    mis, repeated = special_nodes(masked_plan)
+    if mis:
+        return max(mis, key=lambda x: x["ratio"])["id"], "misestimated rows"
+    base = baseline(masked_plan)
+    if repeated:
+        best = max(repeated, key=lambda x: x["true_self"] * x["loops"])
+        if best["true_self"] * best["loops"] > nodes[base]["true_self"]:
+            return best["id"], "repeated inner scan"
+    return base, "highest self cost"
 
 
 # ------------------------------------------------------------
 # Public API
 # ------------------------------------------------------------
-_model = None
+_model, _meta = None, {}
+
+
+def save_model(model, validated, metrics):
+    """Weights + VALIDATED flag + the numbers that decided it, in one file."""
+    torch.save({"state_dict": model.state_dict(), "validated": bool(validated), "metrics": metrics},
+               WEIGHTS_PATH)
 
 
 def load_model():
-    global _model
+    global _model, _meta
     if _model is None and WEIGHTS_PATH.exists():
-        m = BottleneckGCN().to(DEVICE)
-        m.load_state_dict(torch.load(WEIGHTS_PATH, map_location=DEVICE))
-        m.eval()
-        _model = m
-    return _model
+        saved = torch.load(WEIGHTS_PATH, map_location=DEVICE)
+        if isinstance(saved, dict) and "state_dict" in saved:
+            m = BottleneckGCN().to(DEVICE)
+            m.load_state_dict(saved["state_dict"])
+            m.eval()
+            _model, _meta = m, {"validated": saved["validated"], "metrics": saved["metrics"]}
+        # an old weights file without the flag is ignored -> rules path
+    return _model, _meta
 
 
 def explain_node(masked_plan, node_id, source):
@@ -217,52 +279,80 @@ def explain_node(masked_plan, node_id, source):
     }
 
 
+def choose(masked_plan, model=None, validated=False):
+    """(node_id, path) - see the three paths in the module docstring."""
+    if model is None:
+        return rules_pick(masked_plan)[0], "rules"
+    if validated:
+        return predict(model, masked_plan), "gnn"
+    base = baseline(masked_plan)
+    pick, prob = predict(model, masked_plan, with_prob=True)
+    mis, repeated = special_nodes(masked_plan)
+    if pick != base and pick in {x["id"] for x in mis + repeated} and prob >= GATE_CONFIDENCE:
+        return pick, "gated_hybrid"
+    return base, "gated_hybrid"
+
+
 def find_bottleneck(masked_plan):
     """Bottleneck node of a masked EXPLAIN plan, with a readable reason and evidence.
-    Uses the trained GCN if weights exist, otherwise the highest-self-cost baseline."""
-    model = load_model()
-    if model is None:
-        return explain_node(masked_plan, baseline(masked_plan), "baseline (no trained weights)")
-    return explain_node(masked_plan, predict(model, masked_plan), "gnn")
+    The output says which path picked it ("path": gnn / gated_hybrid / rules)."""
+    model, meta = load_model()
+    node_id, path = choose(masked_plan, model, meta.get("validated", False))
+    out = explain_node(masked_plan, node_id, path)
+    out["path"] = path
+    return out
 
 
 if __name__ == "__main__":
-    from collections import defaultdict
-
     from ai import plan_gen
 
     plans = plan_gen.make_plans()
     tr, te = plan_gen.split(plans)
     print(f"device: {DEVICE} ({torch.cuda.get_device_name(0) if DEVICE.type == 'cuda' else 'cpu'})")
+    print(f"{len(tr)} train plans / {len(te)} held-out plans (shapes {sorted(plan_gen.TEST_SHAPES)})")
     t0 = time.time()
     model = train(tr, verbose=True)
-    print(f"trained on {len(tr)} plans in {time.time() - t0:.1f} s")
+    print(f"trained in {time.time() - t0:.1f} s")
 
-    def score(ps):
-        by_rule = defaultdict(lambda: [0, 0, 0])      # rule -> [gnn right, baseline right, n]
-        for p in ps:
-            r = by_rule[p["label_rule"]]
-            r[0] += predict(model, p["plan"]) == p["label"]
-            r[1] += baseline(p["plan"]) == p["label"]
-            r[2] += 1
-        return by_rule
+    methods = {
+        "baseline": lambda p: baseline(p),
+        "rules": lambda p: choose(p)[0],
+        "gnn (raw)": lambda p: predict(model, p),
+        "gated_hybrid": lambda p: choose(p, model, validated=False)[0],
+    }
+    cats = {"overall": lambda r: True,
+            "normal": lambda r: r == "highest_self_cost",
+            "repeated inner scan": lambda r: r in ("repeated_inner", "correlated_sub"),
+            "misestimated rows": lambda r: r == "misestimate"}
 
-    for title, ps in (("TRAIN shapes", tr), ("HELD-OUT shapes " + str(sorted(plan_gen.TEST_SHAPES)), te)):
-        by = score(ps)
-        g = sum(v[0] for v in by.values()); b = sum(v[1] for v in by.values()); n = sum(v[2] for v in by.values())
-        print(f"\n{title}: GNN {100 * g / n:.1f}%  vs  baseline {100 * b / n:.1f}%   ({n} plans)")
-        for rule, (gr, br, k) in sorted(by.items()):
-            print(f"   {rule:18} GNN {gr:3}/{k:<3}  baseline {br:3}/{k}")
+    def table(title, ps):
+        res = {m: {} for m in methods}
+        for m, f in methods.items():
+            for c, keep in cats.items():
+                sub = [p for p in ps if keep(p["label_rule"])]
+                res[m][c] = (sum(f(p["plan"]) == p["label"] for p in sub), len(sub))
+        print(f"\n{title}")
+        print(f"  {'method':14}" + "".join(f"{c:>24}" for c in cats))
+        for m in methods:
+            print(f"  {m:14}" + "".join(f"{f'{k}/{n} ({100 * k / max(1, n):.0f}%)':>24}"
+                                        for k, n in res[m].values()))
+        return res
 
-    torch.save(model.state_dict(), WEIGHTS_PATH)
-    print(f"\nweights saved to {WEIGHTS_PATH.name}")
+    table("TRAIN shapes", tr)
+    res = table("HELD-OUT shapes (never trained on)", te)
+    g_norm, base_norm = res["gnn (raw)"]["normal"][0], res["baseline"]["normal"][0]
+    validated = g_norm >= base_norm
+    save_model(model, validated, {"heldout_normal_gnn": g_norm, "heldout_normal_baseline": base_norm,
+                                  "heldout_normal_n": res["baseline"]["normal"][1]})
+    print(f"\nVALIDATED = {validated}  (held-out normal plans: GNN {g_norm} vs baseline {base_norm})"
+          f" -> find_bottleneck() path: {'gnn' if validated else 'gated_hybrid'}")
 
-    print("\nEXAMPLE OUTPUTS (held-out plans):")
+    print("\nEXAMPLE OUTPUTS via find_bottleneck() (held-out plans, weights reloaded from disk):")
     for rule in ("highest_self_cost", "repeated_inner", "misestimate"):
         p = next(p for p in te if p["label_rule"] == rule)
         out = find_bottleneck(p["plan"])
         ok = "correct" if out["node_id"] == p["label"] else f"WRONG (label {p['label']})"
-        print(f"\n[{p['id']}] label rule: {rule} -> GNN picked node {out['node_id']} ({ok}); "
-              f"baseline picked node {baseline(p['plan'])}")
-        print({k: out[k] for k in ("node_id", "operator", "relation", "rows", "cost_share_pct")})
+        print(f"\n[{p['id']}] label: {rule} -> node {out['node_id']} ({ok}), path={out['path']}; "
+              f"baseline would pick node {baseline(p['plan'])}")
+        print({k: out[k] for k in ("node_id", "operator", "relation", "rows", "cost_share_pct", "path")})
         print("reason:", out["reason"])
