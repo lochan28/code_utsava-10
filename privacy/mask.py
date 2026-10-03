@@ -51,6 +51,7 @@ class Mapping:
         self.literals = set()         # every literal value masked so far (for the leak check)
         self.query_aliases = {}       # table aliases of the last masked query, reused by mask_plan
         self.query_params = {}        # value -> placeholder number of the last masked query, reused by mask_plan
+        self.query_param_floor = 0    # highest $n that was already in that query's SQL
 
 
 def _secret_key():
@@ -177,17 +178,23 @@ def mask_query(sql, mapping):
     # 3) Every literal value (numbers, strings, dates) becomes a numbered
     #    placeholder $1, $2 ...; the same value reuses its number (contract v2).
     #    Exception: GROUP BY 1 / ORDER BY 2 mean "output column 1/2" - structure, not data.
+    #    $n already in the SQL (pg_stat_statements, logs) hold no value: kept as is,
+    #    and new numbers start after the highest one so they never collide.
+    floor = max((int(p.name) for p in tree.find_all(exp.Parameter) if p.name.isdigit()), default=0)
     params = {}
     for lit in list(tree.find_all(*LITERAL_TYPES, bfs=False)):   # reading order: $1 is the first value
+        if isinstance(lit.parent, exp.Parameter):               # the "1" inside an existing $1
+            continue
         if isinstance(lit, exp.Literal) and isinstance(lit.parent, (exp.Group, exp.Ordered)) and lit.is_int:
             continue
         value = str(lit.this)
         mapping.literals.add(value)
-        n = params.setdefault(value, len(params) + 1)
+        n = params.setdefault(value, floor + len(params) + 1)
         lit.replace(exp.Parameter(this=exp.Literal.number(n)))
 
     mapping.query_aliases = {k: v for k, v in aliases.items() if v.startswith("a")}
     mapping.query_params = params
+    mapping.query_param_floor = floor
     # comments=False: a pasted /* note */ or -- comment can hold names or values.
     return tree.sql(dialect="postgres", comments=False)
 
@@ -284,7 +291,9 @@ def _mask_token(tok, aliases, mapping, params):
         mapping.literals.add(value)
         # Postgres shows the query's '2026-08-01' as '2026-08-01 00:00:00+00' - same value, same number.
         value = MIDNIGHT_RE.sub("", value)
-        return f"${params.setdefault(value, len(params) + 1)}"
+        if value not in params:             # next free number, never one already in use
+            params[value] = max([mapping.query_param_floor, *params.values()]) + 1
+        return f"${params[value]}"
     if tok.startswith("$") or tok.startswith(("SubPlan", "InitPlan")):
         return tok                          # internal plan references, not data
     if tok in aliases:
@@ -467,8 +476,12 @@ def _self_test():
               "SELECT order_id FROM orders WHERE status = E'Diya' AND name = $$Diya$$ AND email = N'Diya'"]
     tr_ok = all("Diya" not in (out := mask_query(s, m)) and verify_no_leak(out, m) for s in tricky)
     print(f"Comments and special strings (E'', $$, N''): {'PASS' if tr_ok else 'FAIL'}")
+    pre = mask_query("SELECT 1 FROM orders WHERE customer_id = $1 AND status = 'x' AND region_id = $3", m)
+    pre_ok = ("c_720 = $1" in pre and "c_13b = $3" in pre and "$$" not in pre
+              and "$4" in pre and "$5" in pre and verify_no_leak(pre, m))
+    print(f"Existing $n placeholders kept, new ones never collide: {'PASS' if pre_ok else 'FAIL'}")
     print("Example (q11):", mask_query(queries.get("q11")["sql"], m)[:120], "...")
-    return passed == n and ct_ok and st_ok and ex_ok and tr_ok
+    return passed == n and ct_ok and st_ok and ex_ok and tr_ok and pre_ok
 
 
 if __name__ == "__main__":
