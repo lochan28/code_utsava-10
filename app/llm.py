@@ -67,7 +67,8 @@ AUDIT_LOG_PATH = Path(__file__).with_name("audit_log.jsonl")   # git-ignored
 
 PROMPT_TEMPLATE = """You are a database performance assistant for an administrator.
 You only see anonymised metadata: table and column names are hashed (like t_a3f, c_91b)
-and values are replaced by "?". Use only the names given below and never guess real ones.
+and values are replaced by placeholders (? or $1, $2, ...). Use only the names given below
+and never guess real ones.
 
 Slow query (masked):
 {masked_query}

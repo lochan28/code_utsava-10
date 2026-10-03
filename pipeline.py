@@ -7,6 +7,7 @@ on the left (db/, privacy/), only masked data crosses to ai/ and app/llm.py.
 Self-test:  .venv/Scripts/python pipeline.py
 """
 import hashlib
+import inspect
 import json
 import math
 import os
@@ -185,6 +186,107 @@ def match_question(question):
                "method": method, "runner_up": None}
 
 
+# ============================================================
+# Hooks that connect ai/ to the real database (Step 3.5)
+# ============================================================
+# Only actions of this shape are costed. Anything else (PARTITION ..., several
+# statements, DROP ...) is refused with ValueError, which P3 turns into "rule_only".
+# When Person 1's sandbox can cost PARTITION actions (contract v2), allow them here.
+SIMULATABLE_ACTION = re.compile(r"\s*CREATE\s+(UNIQUE\s+)?INDEX\b[^;]*;?\s*", re.I | re.S)
+
+
+def make_cost_fn(original_sql, masked_original, mapping):
+    """The AI's only window into the database for planner costs: masked text in, a number out."""
+    def cost_fn(m_sql, m_actions):
+        for action in m_actions:
+            if not SIMULATABLE_ACTION.fullmatch(action):
+                raise ValueError(f"cannot simulate this action (only CREATE INDEX): {action[:40]}")
+        # The unchanged query is costed exactly as the admin wrote it; a REWRITE arrives
+        # as new masked SQL and has to be un-masked first.
+        sql = original_sql if m_sql == masked_original else mask.unmask(m_sql, mapping)
+        return sandbox.cost(sql, [mask.unmask(a, mapping) for a in m_actions])
+    return cost_fn
+
+
+class TimeCheckError(RuntimeError):
+    """The real timing run failed. Carries only the exception TYPE name: the original
+    message could contain real names, and it must not reach the audit log."""
+
+
+def make_time_fn(original_sql, masked_original, mapping, checks):
+    """time_fn for ai/, or None until Person 1's sandbox has checked_run().
+
+    The real run returns {"ms", "rows", "checksum"}. Rows and checksum are compared HERE
+    against the original query and never leave this function: ai/ only gets
+    {"ms", "results_match"}. Every call is also recorded in `checks` (a list)."""
+    run = getattr(sandbox, "checked_run", None)
+    if run is None:
+        return None
+    baseline = {}
+
+    def time_fn(m_sql):
+        try:
+            sql = original_sql if m_sql == masked_original else mask.unmask(m_sql, mapping)
+            if "run" not in baseline:
+                baseline["run"] = run(original_sql)
+            base = baseline["run"]
+            res = base if sql == original_sql else run(sql)
+            match = (res["rows"], res["checksum"]) == (base["rows"], base["checksum"])
+            checks.append({"masked_sql": m_sql, "ms": res["ms"], "results_match": match})
+            return {"ms": res["ms"], "results_match": match}
+        except Exception as e:                           # noqa: BLE001
+            raise TimeCheckError(type(e).__name__) from None
+    return time_fn
+
+
+def _complete_stats(stats):
+    """Give P3 the keys it indexes directly. Numbers only, computed AFTER the leak check.
+    Contract v2 supplies n_distinct; P3's code wants eq_sel = 1 / n_distinct."""
+    out = dict(stats)
+    out.setdefault("rows", {})
+    out.setdefault("existing_indexes", [])
+    out.setdefault("range_sel", {})
+    if "eq_sel" not in out:
+        eq = {}
+        for key, nd in (stats.get("n_distinct") or {}).items():
+            if isinstance(nd, (int, float)) and nd < 0:      # Postgres: -0.5 = half the rows
+                nd = -nd * out["rows"].get(key.split(".")[0], 0)
+            if isinstance(nd, (int, float)) and nd >= 1:
+                eq[key] = 1.0 / nd
+        out["eq_sel"] = eq
+    return out
+
+
+def _masked_extra(label, producer, is_clean, query_id):
+    """Build ONE optional masked input for ai/ (stats, column_types).
+
+    Never stops the analysis: if anything is wrong the input is skipped and an event
+    goes to the audit log (ids, sizes, hashes, exception type - never the text itself).
+    Returns (value or None, status text for the UI)."""
+    if producer is None:
+        return None, "not available yet"
+    try:
+        value = producer()
+    except Exception as e:                               # noqa: BLE001
+        llm.audit_event(f"{label}_unavailable", query_id=query_id, error=type(e).__name__)
+        return None, "unavailable"
+    blob = json.dumps(value, default=str)
+    if not is_clean(blob):
+        llm.audit_event(f"{label}_dropped", query_id=query_id, reason="failed the leak check",
+                        chars=len(blob), sha256=hashlib.sha256(blob.encode()).hexdigest()[:12])
+        return None, "dropped: failed the leak check"
+    return value, "used"
+
+
+def _accepted(fn, names):
+    """Which of `names` can this function take as keyword arguments? (The stub
+    ai/rl.py takes none; P3's real one takes all. Same pipeline works with both.)"""
+    params = inspect.signature(fn).parameters
+    if any(p.kind is p.VAR_KEYWORD for p in params.values()):
+        return set(names)
+    return {n for n in names if n in params}
+
+
 def analyze(question):
     # The raw question and any pasted SQL are UNTRUSTED and may hold real names,
     # emails or amounts. The raw question was used above for matching ONLY. From
@@ -222,13 +324,50 @@ def analyze(question):
         if PRIVACY_STRICT:
             raise PrivacyError(BLOCKED_MESSAGE)
 
-    def cost_fn(m_sql, m_indexes):
-        """The AI's only window into the DB: masked SQL in, a number out."""
-        return sandbox.cost(q["sql"], [mask.unmask(i, mapping) for i in m_indexes])
+    cost_fn = make_cost_fn(q["sql"], masked_sql, mapping)
 
     # ---- AI side: masked data only ----
     bottleneck = gnn.find_bottleneck(masked_plan)
-    recs = rl.recommend(masked_sql, masked_plan, cost_fn)
+
+    # Optional extra inputs. Each one is built only if ai/ can take it AND the module that
+    # supplies it exists yet; otherwise it is simply left out (no crash, no fake data).
+    takes = _accepted(rl.recommend, ("time_fn", "stats", "column_types"))
+    checks, extra, ai_inputs = [], {}, {}
+    time_fn = make_time_fn(q["sql"], masked_sql, mapping, checks) if "time_fn" in takes else None
+    if time_fn:
+        extra["time_fn"] = time_fn
+    ai_inputs["time_fn"] = ("used" if time_fn else "not available yet") if "time_fn" in takes \
+        else "not supported by ai/ yet"
+    for label, producer in (
+            ("stats", (lambda: mask.mask_stats(sandbox.table_stats(), mapping))
+             if hasattr(mask, "mask_stats") and hasattr(sandbox, "table_stats") else None),
+            ("column_types", (lambda: mask.column_types(mapping))
+             if hasattr(mask, "column_types") else None)):
+        if label not in takes:
+            ai_inputs[label] = "not supported by ai/ yet"
+            continue
+        value, ai_inputs[label] = _masked_extra(label, producer, is_clean, match["query_id"])
+        if value is not None:
+            extra[label] = _complete_stats(value) if label == "stats" else value
+
+    try:
+        recs = rl.recommend(masked_sql, masked_plan, cost_fn, **extra)
+    except TimeCheckError as e:
+        # The real timing run failed. P3's code does not catch that, so retry without it:
+        # rewrites then show as unverified instead of the whole analysis dying.
+        llm.audit_event("time_fn_failed", query_id=match["query_id"], error=str(e))
+        extra.pop("time_fn", None)
+        ai_inputs["time_fn"] = "failed: rewrites are unverified"
+        recs = rl.recommend(masked_sql, masked_plan, cost_fn, **extra)
+
+    # A rewrite whose rows differ from the original query's rows is UNSAFE. Flag it, and
+    # sort it below every safe fix so it can never become the "best" one.
+    unsafe = {c["masked_sql"] for c in checks if not c["results_match"]}
+    for r in recs:
+        if r.get("kind") == "rewrite" and r.get("action") in unsafe:
+            r["unsafe_rewrite"] = True
+            r["warning"] = "UNSAFE REWRITE: returns different rows than the original. Do not deploy."
+    recs.sort(key=lambda r: bool(r.get("unsafe_rewrite")))     # stable: only moves unsafe ones down
     best = recs[0]
     masked_result = {"masked_query": masked_sql, "masked_plan": masked_plan,
                      "bitmask": bitmask, "bottleneck": bottleneck, "recommendations": recs}
@@ -265,6 +404,12 @@ def analyze(question):
         # Extra key: how the explanation was made + its leak-check results, for the UI.
         "llm": {k: llm_out[k] for k in ("source", "prompt_leak_ok", "reply_leak_ok",
                                         "latency_ms", "fallback_reason")},
+        # Extra key: True if any rewrite returned different rows than the original query.
+        "unsafe_rewrite": bool(unsafe),
+        # Extra key: which optional inputs ai/ really received, e.g. {"time_fn": "used",
+        # "stats": "dropped: failed the leak check", ...}. Lets the UI say why a rewrite
+        # is "unverified" instead of leaving the admin guessing.
+        "ai_inputs": ai_inputs,
     }
 
 
