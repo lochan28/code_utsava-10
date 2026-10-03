@@ -14,6 +14,7 @@ import hashlib
 import hmac
 import json
 import re
+from collections import Counter
 from pathlib import Path
 
 import psycopg
@@ -144,6 +145,11 @@ def column_types(mapping):
     return {f"{mapping.tables[t]}.{mapping.columns[c]}": kind(dt) for (t, c), dt in mapping.types.items()}
 
 
+# Every kind of value sqlglot can parse: '...', 3, E'...', B'101', X'ff', U&'...', $$...$$, N'...'
+LITERAL_TYPES = (exp.Literal, exp.ByteString, exp.BitString, exp.HexString,
+                 exp.UnicodeString, exp.RawString, exp.National)
+
+
 def mask_query(sql, mapping):
     """Rename every table/column/alias to its code and turn every literal into $1, $2 ...
 
@@ -172,8 +178,8 @@ def mask_query(sql, mapping):
     #    placeholder $1, $2 ...; the same value reuses its number (contract v2).
     #    Exception: GROUP BY 1 / ORDER BY 2 mean "output column 1/2" - structure, not data.
     params = {}
-    for lit in list(tree.find_all(exp.Literal, bfs=False)):   # reading order: $1 is the first value
-        if isinstance(lit.parent, (exp.Group, exp.Ordered)) and lit.is_int:
+    for lit in list(tree.find_all(*LITERAL_TYPES, bfs=False)):   # reading order: $1 is the first value
+        if isinstance(lit, exp.Literal) and isinstance(lit.parent, (exp.Group, exp.Ordered)) and lit.is_int:
             continue
         value = str(lit.this)
         mapping.literals.add(value)
@@ -182,7 +188,8 @@ def mask_query(sql, mapping):
 
     mapping.query_aliases = {k: v for k, v in aliases.items() if v.startswith("a")}
     mapping.query_params = params
-    return tree.sql(dialect="postgres")
+    # comments=False: a pasted /* note */ or -- comment can hold names or values.
+    return tree.sql(dialect="postgres", comments=False)
 
 
 def _mask_identifier(ident, aliases, mapping):
@@ -352,11 +359,45 @@ def find_leaks(text, mapping, free_text=False):
     values = {v for v in mapping.literals if not free_text or not v.isdigit() or len(v) >= 3}
     leaks = set()
     for s in strings:
+        positions = None                   # parsed lazily, only when a whole number is found
         for word in names | values:
-            # (?<![\w$-]): the 3 in placeholder "$3" is a position number, not the value 3
-            if re.search(r"(?<![\w$-])" + re.escape(word) + r"(?![\w-])", s, re.IGNORECASE):
+            hits = len(re.findall(r"(?<![\w-])" + re.escape(word) + r"(?![\w-])", s, re.IGNORECASE))
+            if hits and word.isdigit():
+                # Some of these hits may be structure, not data: the "1" in placeholder
+                # $1, or in GROUP BY 1 / ORDER BY 1. Only those occurrences are excused.
+                positions = _structural_numbers(s) if positions is None else positions
+                hits -= positions.get(word, 0)
+            if hits > 0:
                 leaks.add(word)
+        # Raw data we never masked (so not in mapping.literals) but must never show.
+        leaks |= {"<email>" for _ in EMAIL_RE.finditer(s)}
+        leaks |= {"<card number>" for c in CARD_RE.finditer(s) if _luhn(re.sub(r"\D", "", c.group()))}
     return sorted(leaks)
+
+
+EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+CARD_RE = re.compile(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)")
+
+
+def _luhn(digits):
+    """Card-number checksum: true for real card numbers, false for most random digit runs."""
+    total = sum(int(d) if i % 2 == 0 else sum(divmod(int(d) * 2, 10))
+                for i, d in enumerate(reversed(digits)))
+    return total % 10 == 0
+
+
+def _structural_numbers(s):
+    """Count numbers in s that are placeholder numbers ($1) or GROUP BY / ORDER BY
+    positions, found by parsing with sqlglot. Text that does not parse as SQL
+    gets no exemptions (checked exactly as written)."""
+    try:
+        tree = sqlglot.parse_one(s, read="postgres")
+    except (sqlglot.errors.ParseError, sqlglot.errors.TokenError):
+        return {}
+    found = [p.name for p in tree.find_all(exp.Parameter)]
+    found += [lit.name for lit in tree.find_all(exp.Literal)
+              if lit.is_int and isinstance(lit.parent, (exp.Group, exp.Ordered))]
+    return Counter(found)
 
 
 def verify_no_leak(text, mapping, free_text=False):
@@ -415,8 +456,19 @@ def _self_test():
     st_ok = verify_no_leak(json.dumps(mask_stats(sample_stats, m)), m)
     print(f"column_types: {'PASS' if ct_ok else 'FAIL'} ({len(ct)} columns)   "
           f"mask_stats: {'PASS' if st_ok else 'FAIL'}")
+    mask_query("SELECT order_id FROM orders WHERE region_id = 1 GROUP BY 1", m)   # value 1 now masked
+    explanations = [("Filter c_13b = $1 scans all rows; GROUP BY 1 groups by week.", True),
+                    ("Add an index on t_438.c_13b, c_303 to cut cost 95%.", True),
+                    ("The slow rows belong to diya.reddy1@example.com.", False),
+                    ("Customer paid with card 4111 1111 1111 1111.", False)]
+    ex_ok = all(verify_no_leak(t, m, free_text=True) == clean for t, clean in explanations)
+    print(f"LLM explanations (free text, 2 clean + email + card): {'PASS' if ex_ok else 'FAIL'}")
+    tricky = ["SELECT order_id FROM orders /* customer Diya Reddy */ WHERE region_id = 3 -- for Diya",
+              "SELECT order_id FROM orders WHERE status = E'Diya' AND name = $$Diya$$ AND email = N'Diya'"]
+    tr_ok = all("Diya" not in (out := mask_query(s, m)) and verify_no_leak(out, m) for s in tricky)
+    print(f"Comments and special strings (E'', $$, N''): {'PASS' if tr_ok else 'FAIL'}")
     print("Example (q11):", mask_query(queries.get("q11")["sql"], m)[:120], "...")
-    return passed == n and ct_ok and st_ok
+    return passed == n and ct_ok and st_ok and ex_ok and tr_ok
 
 
 if __name__ == "__main__":
