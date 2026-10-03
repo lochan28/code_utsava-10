@@ -4,4 +4,5 @@ __pycache__/
 .env
 data/
 *.log
-audit_log.jsonl
+# Team masking key (privacy/mask.py) - never commit
+.secret_key

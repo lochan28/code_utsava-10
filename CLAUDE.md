@@ -60,10 +60,23 @@ directly (`python -m <module>`) as a self-test. `stub`s exist for every
 function so others can build against them; replace the stub body, keep the
 signature and the return shape.
 
+Items marked **(v2)** were added on day 1 after the first integration (P3's
+requests). They are additions only — nothing existing was renamed or removed.
+
 `db/sandbox.py` (Person 1) — the only code that touches real SQL and data
 - `get_plan(sql) -> dict` — `EXPLAIN (FORMAT JSON)` plan (no ANALYZE).
 - `cost(sql, hypo_indexes=[]) -> float` — planner total cost, with HypoPG
   hypothetical indexes (list of `CREATE INDEX ...` strings). Never creates real indexes.
+  **(v2)** The list may also contain ONE partition action, exact format
+  `PARTITION <table> BY RANGE (<column>) MONTHLY` (or `YEARLY`); it is costed on a
+  partitioned copy in schema `sandbox`. Anything it cannot simulate → `ValueError`.
+- **(v2)** `checked_run(sql, index_sqls=[]) -> dict` — `{"ms", "rows", "checksum"}`:
+  median real ms on sandbox copies, row count, and an order-independent checksum of
+  ALL result rows (`md5(string_agg(md5(t::text), '' ORDER BY md5(t::text)))`).
+  Proves a rewrite returns the same rows AND is faster. `timed_run` stays as is.
+- **(v2)** `table_stats() -> dict` — REAL names, masked later by P2:
+  `{"rows": {table: n}, "n_distinct": {"table.col": n}, "existing_indexes": [(table, (cols,)), ...]}`
+  (`existing_indexes` includes primary keys).
 - `index_size_bytes(index_sql) -> int` — HypoPG estimated size (storage impact).
 - `measure_write_latency(index_sql) -> dict` — `{"before_ms", "after_ms", "delta_ms"}`
   per insert, measured on a copy table in schema `sandbox`.
@@ -75,10 +88,22 @@ signature and the return shape.
 `privacy/mask.py` (Person 2)
 - `build_mapping() -> Mapping` — from the DB schema; private, never given to AI.
 - `mask_query(sql, mapping) -> str` — names → `t_xxx.c_xxx`, literals → `?`.
+  **(v2)** Must return complete, valid SQL (parseable by sqlglot). Literals become
+  numbered placeholders `$1, $2, ...`; the same value reuses the same number.
+  SQL keywords inside strings are NOT masked: date units (`'month'`, `'week'`, ...)
+  stay as they are.
 - `mask_plan(plan, mapping) -> dict` — same masking on a plan JSON.
 - `column_bitmask(sql, mapping) -> dict` — `{"filter": "0101...", "join": ..., "group": ...}`.
+- **(v2)** `column_types(mapping) -> dict` — `{"t_x.c_y": "date"|"number"|"text"}`.
+- **(v2)** `mask_stats(stats, mapping) -> dict` — masks the names in
+  `sandbox.table_stats()` output, same shape. All masking lives in `privacy/`.
 - `unmask(text, mapping) -> str` — only for the final display to the admin.
+  **(v2)** Works on any text, including P3's `reason`, `why_not`, `summary`.
 - `verify_no_leak(text, mapping) -> bool` — True if no raw name/value remains.
+
+Privacy notes (put in README): numbered placeholders reveal that two values are
+EQUAL, never what they are. Row counts, `n_distinct` and result checksums are
+metadata (numbers / hashes), not data.
 
 `ai/` (Person 3) — sees ONLY masked data
 - `ai/gnn.py: find_bottleneck(masked_plan) -> dict` —
@@ -89,6 +114,14 @@ signature and the return shape.
   "cost_before", "cost_after", "reason"}`, best first. `cost_fn(masked_sql,
   masked_index_sqls) -> float` is handed in by the pipeline; it un-masks
   privately and calls `db.sandbox.cost`, so the AI only ever gets a number back.
+  **(v2)** Full signature: `recommend(masked_sql, masked_plan, cost_fn, stats=None,
+  time_fn=None, agent=None, column_types=None)`. Extra keys per recommendation
+  (`improvement_pct`, `verified_by`, `novelty`, `why_not`, `summary`, ...) are
+  documented in `ai/README.md`. P3 derives range selectivity from the masked plan +
+  `stats["rows"]`; nobody else supplies `range_sel`.
+- **(v2) OPEN — needs a team decision:** the PS asks for a *GNN-generated* reason,
+  but `find_bottleneck` defaults to the `rules` path (GNN not yet validated).
+  Decide how the GNN is shown in the demo before the final merge.
 
 `app/llm.py` (Person 4): `explain(masked_result: dict) -> str` via Ollama
 (`qwen2.5:7b`, `keep_alive=-1`), given ONLY masked data.
@@ -99,6 +132,17 @@ cost_before, cost_after, improvement_pct, time_before_ms, time_after_ms,
 write_latency_ms, storage_bytes, explanation, deploy_sql, leak_check`.
 `deploy_sql` is UN-masked (for the admin only); everything given to `ai/` and
 `app/llm.py` is masked.
+**(v2)** `analyze()` passes into `rl.recommend()`:
+- `cost_fn(masked_sql, masked_actions)` — un-mask both, call `sandbox.cost`
+  (handles indexes AND the partition action; lets `ValueError` propagate).
+- `time_fn(masked_sql)` — un-mask, call `sandbox.checked_run`, return its dict.
+- `stats = mask.mask_stats(sandbox.table_stats(), mapping)`
+- `column_types = mask.column_types(mapping)`
+
+## Merge order (lead merges into master)
+1. P2 masker (unblocks everyone)  2. P1 sandbox (+ `checked_run`, `table_stats`,
+partition)  3. P3 ai (commit README + `gnn_weights.pt` + `rl_agent.json` first)
+4. P4 app + pipeline.  After each merge, everyone runs `git merge master`.
 
 ## Shared database — careful
 One Postgres in Docker serves all four chats.
