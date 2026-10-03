@@ -1,0 +1,2 @@
+# Secret HMAC key for name hashing - never commit
+.secret_key
