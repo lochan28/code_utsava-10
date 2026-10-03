@@ -1,7 +1,7 @@
 """Simulation sandbox: the ONLY module that runs SQL against the database.
 
 Owner: Person 1.
-STATUS: get_plan, cost, index_size_bytes (real build), timed_run,
+STATUS: get_plan, cost, index_size_bytes (real build), timed_run, checked_run,
         measure_write_latency = REAL.
         slow_queries is still a STUB (fake numbers).
 Keep the signatures and return shapes (see CLAUDE.md "Shared interface contract").
@@ -245,14 +245,11 @@ def measure_write_latency(index_sql):
             "delta_ms": round(after - before, 5)}
 
 
-def timed_run(sql, index_sqls=[]):
-    """Real execution time (ms) of sql on the sandbox copies, with these
-    indexes REALLY built there. Median of TIMING_REPEATS runs.
-
-    Everything happens inside one transaction that is rolled back at the end,
-    so the indexes vanish afterwards (even if Python crashes) and nobody else
-    ever sees them. The public tables are never touched.
-    """
+def _sandbox_run(sql, index_sqls, with_checksum):
+    """Shared by timed_run() and checked_run(): build the indexes for real on
+    the sandbox copies, lock the transaction read-only, time sql (median of
+    TIMING_REPEATS after a warm-up), optionally fingerprint its result rows,
+    then roll everything back so the indexes vanish."""
     _check_select(sql)
     for index_sql in index_sqls:
         _check_sandbox_index(index_sql)
@@ -262,14 +259,45 @@ def timed_run(sql, index_sqls=[]):
         conn.execute("SELECT pg_advisory_xact_lock(%s)", (SANDBOX_LOCK_ID,))
         for index_sql in index_sqls:
             conn.execute(index_sql)
-        conn.execute("SET transaction_read_only = on")   # the timed query can't change anything
+        conn.execute("SET transaction_read_only = on")   # the query can't change anything
         times = []
         for _ in range(TIMING_REPEATS + 1):
             plan = conn.execute("EXPLAIN (ANALYZE, TIMING OFF, FORMAT JSON) " + sql).fetchone()[0][0]
             times.append(plan["Execution Time"])
-        return round(statistics.median(times[1:]), 2)    # times[0] is the warm-up
+        result = {"ms": round(statistics.median(times[1:]), 2)}   # times[0] is the warm-up
+        if with_checksum:
+            # Order-independent fingerprint of ALL result rows (agreed with Person 3,
+            # see ai/verify.py): hash each row, sort the hashes, hash them together.
+            rows, checksum = conn.execute(
+                "SELECT count(*), md5(coalesce(string_agg(md5(t::text), '' "
+                f"ORDER BY md5(t::text)), '')) FROM ({sql}) AS t").fetchone()
+            result.update(rows=int(rows), checksum=checksum)
+        return result
     finally:
         conn.rollback()
+
+
+def timed_run(sql, index_sqls=[]):
+    """Real execution time (ms) of sql on the sandbox copies, with these
+    indexes REALLY built there. Median of TIMING_REPEATS runs.
+
+    Everything happens inside one transaction that is rolled back at the end,
+    so the indexes vanish afterwards (even if Python crashes) and nobody else
+    ever sees them. The public tables are never touched.
+    """
+    return _sandbox_run(sql, index_sqls, with_checksum=False)["ms"]
+
+
+def checked_run(sql, index_sqls=[]):
+    """Like timed_run(), but also proves WHAT the query returned:
+    {"ms": median time, "rows": row count, "checksum": fingerprint of all rows}.
+
+    Two queries with the same rows + checksum returned the same result set
+    (row order ignored), so a rewrite can be shown to be correct AND faster.
+    Caveats: values must print the same way (e.g. 5 vs 5.00 differ), and a
+    LIMIT with ties can legitimately return different rows each run.
+    """
+    return _sandbox_run(sql, index_sqls, with_checksum=True)
 
 
 def slow_queries(limit=10):
