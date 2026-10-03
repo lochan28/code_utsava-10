@@ -1,8 +1,9 @@
 """Simulation sandbox: the ONLY module that runs SQL against the database.
 
 Owner: Person 1.
-STATUS: get_plan, cost, index_size_bytes (real build), timed_run = REAL.
-        measure_write_latency, slow_queries are still STUBS (fake numbers).
+STATUS: get_plan, cost, index_size_bytes (real build), timed_run,
+        measure_write_latency = REAL.
+        slow_queries is still a STUB (fake numbers).
 Keep the signatures and return shapes (see CLAUDE.md "Shared interface contract").
 
 Self-test:  .venv/Scripts/python -m db.sandbox
@@ -24,6 +25,10 @@ STATEMENT_TIMEOUT_S = 30   # Safety net: any single SQL call slower than this is
 TIMING_REPEATS = 5         # timed_run() runs the query this many times (after one
                            # warm-up run) and reports the middle value. More =
                            # steadier numbers but slower; 3-10 is sensible.
+WRITE_TEST_ROWS = 10000    # rows inserted per write-latency batch. More = steadier
+                           # per-row average but slower; 5000-50000 is sensible.
+WRITE_REPEATS = 9          # write batches timed in each round (after one
+                           # warm-up each); the median is used. 3-10 is sensible.
 
 # ============================================================
 # FIXED SETTINGS - must match docker-compose.yml
@@ -177,9 +182,67 @@ def hypopg_index_size_bytes(index_sql):
         conn.execute("SELECT hypopg_reset()")
 
 
+# Random but realistic new rows for each table ("g" = 1..N from generate_series).
+# Ids start far above the real ones so they never clash with existing keys.
+_NEW_ROWS = {
+    "orders": "SELECT 100000000 + g, 1 + (random()*49999)::int, 1 + (random()*9)::int, "
+              "1 + (random()*1999)::int, DATE '2023-10-01' + (random()*1095)::int, "
+              "1 + (random()*4)::int, round((random()*5000)::numeric, 2), "
+              "(ARRAY['delivered','shipped','pending','cancelled','returned'])[1 + (random()*4)::int]",
+    "customers": "SELECT 100000000 + g, 'New Customer', 'new' || g || '@example.com', "
+                 "1 + (random()*9)::int, 'consumer', DATE '2026-09-30'",
+    "products": "SELECT 100000000 + g, 'New item', 'Toys', round((random()*900)::numeric, 2)",
+    "regions": "SELECT 100000000 + g, 'New region', 'India'",
+}
+
+
 def measure_write_latency(index_sql):
-    """Per-insert latency on a sandbox copy, without vs with the index."""
-    return {"before_ms": 0.050, "after_ms": 0.052, "delta_ms": 0.002}
+    """Per-insert cost (ms per row) on the sandbox copy, without vs with the index.
+
+    Each batch inserts the same WRITE_TEST_ROWS random rows in one statement,
+    timed by Postgres itself (EXPLAIN ANALYZE), so network/Python delays don't
+    drown the tiny index-maintenance cost. Every batch is undone with a
+    savepoint, and the whole test (index included) is rolled back at the end.
+
+    Order is A-B-A: without index, with index, without again. Undone rows
+    still take space until the end, so later batches get slightly slower;
+    averaging the two "without" rounds cancels that drift.
+    """
+    _check_sandbox_index(index_sql)
+    table = _INDEX_SQL.match(index_sql)["table"]
+    insert = (f"EXPLAIN (ANALYZE, TIMING OFF, FORMAT JSON) "
+              f"INSERT INTO {table} SELECT * FROM new_rows")
+    ensure_sandbox()
+    conn = _sandbox_connection()
+
+    def per_row_ms():
+        times = []
+        for _ in range(WRITE_REPEATS + 1):
+            conn.execute("SAVEPOINT batch")
+            times.append(conn.execute(insert).fetchone()[0][0]["Execution Time"])
+            conn.execute("ROLLBACK TO SAVEPOINT batch")
+        return statistics.median(times[1:]) / WRITE_TEST_ROWS   # times[0] is the warm-up
+
+    try:
+        conn.execute("SELECT pg_advisory_xact_lock(%s)", (SANDBOX_LOCK_ID,))
+        # Random rows made ONCE, so every batch inserts exactly the same rows.
+        conn.execute(f"CREATE TEMP TABLE new_rows (LIKE {table}) ON COMMIT DROP")
+        conn.execute(f"INSERT INTO new_rows {_NEW_ROWS[table]} "
+                     f"FROM generate_series(1, {WRITE_TEST_ROWS}) g")
+        list_indexes = "SELECT indexrelid::regclass::text FROM pg_index WHERE indrelid = %s::regclass"
+        existing = {r[0] for r in conn.execute(list_indexes, (table,))}
+
+        before_1 = per_row_ms()                       # A: without
+        conn.execute(index_sql)
+        (new_index,) = {r[0] for r in conn.execute(list_indexes, (table,))} - existing
+        after = per_row_ms()                          # B: with
+        conn.execute(f"DROP INDEX {new_index}")
+        before_2 = per_row_ms()                       # A: without, again
+        before = (before_1 + before_2) / 2
+    finally:
+        conn.rollback()
+    return {"before_ms": round(before, 5), "after_ms": round(after, 5),
+            "delta_ms": round(after - before, 5)}
 
 
 def timed_run(sql, index_sqls=[]):
