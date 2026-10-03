@@ -78,6 +78,10 @@ def run(cost_fn=None, time_fn=None, stats=None, write_fn=None, out=print):
 
     b = gnn.find_bottleneck(rec["masked_plan"])
     out(f"BOTTLENECK node {b['node_id']} = {b['operator']} on {b['relation']}   (path: {b['path']})")
+    so = b.get("second_opinion")
+    if so:
+        out(f"GNN 2nd    node {so['node_id']} = {so['op']} on {so['relation']}   (confidence {so['confidence']:.0%}, "
+            f"{'agrees' if so['agrees'] else 'DISAGREES'} with the rules)")
     out(f"           {b['reason']}")
     out("-" * 78)
 

@@ -93,6 +93,22 @@ would pick the step above. The agreed formula was kept. Flags and some labels ch
 (2) q07: Postgres books the hashed `NOT IN` list's time to the parent scan, so the strict label is the
 parent and every method misses it. With q07 labelled as the subquery's scan: baseline 9/11, rules 10/11, raw GNN 10/11, gated hybrid 9/11.
 
+### 3b. GNN attempts on real workload plans (why `rules` stays the default)
+Dev-only experiments (scratch weights; the shipped `ai/gnn_weights.pt` is unchanged). Real
+`EXPLAIN ANALYZE` plans of Person 1's workload, masked; split by held-out query template.
+
+| Attempt | Test | Planner/baseline | Rules | GNN |
+|---|---|---:|---:|---:|
+| Slowest step, measured labels | held out t09-t12 (100) | 100/100 | 100/100 | 100/100 |
+| Slowest step, measured labels | held out t08 + q04 (22) | 0/22 | **22/22** | 0/22 |
+| Time share per step (787 plans, 4 planner settings) | held out t09-t12 (400): share error / slowest step | **10.8%** / 385 | - / 385 | 17.0% / 334 |
+| Time share per step | held out t08 (35) | 98% / 0 | - / **35** | 99.5% / 0 |
+
+Why: the labels are not varied. Even with planner knobs (hash/merge joins off, small
+memory, no index scans, no parallel, no hash aggregate: 1,371 plans) 92% of bottlenecks are
+the same big-table scan, so there is little for a GNN to learn. Decision (CLAUDE.md v3):
+`rules` stays the default; the GNN is shown as `second_opinion` next to the reason.
+
 ## 4. Generalization: queries the agent never trained on
 ### 4a. Person 1's workload: 4 held-out templates, 100 queries
 Command: `python workload_rl.py` (train + evaluate) or `--eval-only` (evaluate the saved agent).
@@ -221,6 +237,7 @@ Every hit:
 | fake_env.py | 229 | everyday word | everyday-word use |
 | fake_env.py | 257 | everyday word | everyday-word use |
 | gnn.py | 266 | everyday word | everyday-word use |
+| gnn.py | 336 | everyday word | everyday-word use |
 | plan_gen.py | 9 | everyday word | everyday-word use |
 | plan_gen.py | 48 | everyday word | everyday-word use |
 | plan_gen.py | 56 | everyday word | everyday-word use |
@@ -238,15 +255,15 @@ Every hit:
 | plan_gen.py | 203 | everyday word | everyday-word use |
 | plan_gen.py | 216 | everyday word | everyday-word use |
 | README.md | 26 | everyday word | everyday-word use |
-| README.md | 35 | everyday word | everyday-word use |
-| README.md | 153 | everyday word | everyday-word use |
-| RESULTS.md | 188 | sales name | un-masked section (allowed) |
-| RESULTS.md | 189 | everyday word | un-masked section (allowed) |
-| RESULTS.md | 190 | sales name | un-masked section (allowed) |
-| RESULTS.md | 191 | sales name | un-masked section (allowed) |
-| RESULTS.md | 192 | sales name | un-masked section (allowed) |
-| RESULTS.md | 193 | sales name | un-masked section (allowed) |
-| RESULTS.md | 194 | sales name | un-masked section (allowed) |
+| README.md | 36 | everyday word | everyday-word use |
+| README.md | 156 | everyday word | everyday-word use |
+| RESULTS.md | 204 | sales name | un-masked section (allowed) |
+| RESULTS.md | 205 | everyday word | un-masked section (allowed) |
+| RESULTS.md | 206 | sales name | un-masked section (allowed) |
+| RESULTS.md | 207 | sales name | un-masked section (allowed) |
+| RESULTS.md | 208 | sales name | un-masked section (allowed) |
+| RESULTS.md | 209 | sales name | un-masked section (allowed) |
+| RESULTS.md | 210 | sales name | un-masked section (allowed) |
 | rewrite.py | 42 | everyday word | everyday-word use |
 | rewrite.py | 138 | everyday word | everyday-word use |
 | rewrite.py | 144 | everyday word | everyday-word use |

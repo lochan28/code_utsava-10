@@ -320,7 +320,21 @@ def find_bottleneck(masked_plan, path_setting=None):
     node_id, path = choose_by_setting(masked_plan, path_setting)
     out = explain_node(masked_plan, node_id, path)
     out["path"] = path
+    out["second_opinion"] = second_opinion(masked_plan, node_id)
     return out
+
+
+def second_opinion(masked_plan, chosen_id):
+    """The shipped GNN's own pick, shown NEXT TO the chosen reason (CLAUDE.md v3).
+    None when there are no weights. It never changes the chosen bottleneck."""
+    model, _ = load_model()
+    if model is None:
+        return None
+    node_id, prob = predict(model, masked_plan, with_prob=True)
+    n = flatten(masked_plan)[node_id]["node"]
+    return {"node_id": node_id, "op": n["Node Type"],
+            "relation": n.get("Relation Name") or n.get("Index Name"),
+            "confidence": round(prob, 3), "agrees": node_id == chosen_id}
 
 
 if __name__ == "__main__":

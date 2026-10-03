@@ -29,6 +29,7 @@ Input: an `EXPLAIN (FORMAT JSON)` plan, masked, as `{"Plan": {...}}`. Plans run 
 | `reason` | one readable sentence built from the numbers (no LLM) |
 | `evidence` | the numbers behind the reason (contract key) |
 | `path` | which method picked it: `rules` / `gated_hybrid` / `gnn` |
+| `second_opinion` | the shipped GNN's own pick, shown NEXT TO the reason (CLAUDE.md v3): `{node_id, op, relation, confidence, agrees}`; never changes the pick; `None` without weights |
 
 **Three paths** (setting `BOTTLENECK_PATH` at the top of `gnn.py`; default **`rules`**):
 
@@ -39,9 +40,10 @@ Input: an `EXPLAIN (FORMAT JSON)` plan, masked, as `{"Plan": {...}}`. Plans run 
 | `gnn` | the trained 2-layer GCN alone (baseline score + learned correction) | needs weights; **not validated** (held-out normal plans 54/59 vs baseline 59/59) |
 | `auto` | `gnn` if the weights file says `validated=True`, else `gated_hybrid` | |
 
-**The default path (`rules`) does not need any weights.** `ai/gnn_weights.pt` is
-not in git (see `ai/.gitignore`); it is only needed for `gated_hybrid`, `gnn` or `auto`.
-Without a weights file every path falls back to `rules`.
+**The default path (`rules`) does not need any weights.** `ai/gnn_weights.pt` (11 KB,
+learned numbers only, no data) **is committed** so the demo and `second_opinion` are
+reproducible (CLAUDE.md v3); re-commit it after every retraining. Without a weights file
+every path falls back to `rules` and `second_opinion` is `None`.
 
 Retrain the weights (from the project root, ~25 s on the RTX 5060, CPU also works):
 
@@ -52,7 +54,8 @@ Retrain the weights (from the project root, ~25 s on the RTX 5060, CPU also work
 This trains on synthetic masked plans from `ai/plan_gen.py`, prints the held-out
 table, and writes `ai/gnn_weights.pt` with its `validated` flag (currently `False`:
 54/59 vs baseline 59/59 on held-out normal plans; on real plans with measured labels
-it lost to `rules` on both splits tried).
+it lost to `rules` on both splits tried; a version predicting each step's share of the
+measured time was also worse than the planner's own share; see `RESULTS.md`).
 
 ### `rl.recommend(masked_sql, masked_plan, cost_fn, ...)`
 Returns recommendations, best first. Contract keys: `kind`, `action`, `cost_before`,
