@@ -17,7 +17,7 @@ import sqlglot
 from sqlglot import exp
 
 from ai import gnn, rl
-from app import llm
+from app import llm, tradeoff
 from db import queries, sandbox
 from privacy import mask
 
@@ -289,6 +289,30 @@ def _accepted(fn, names):
     return {n for n in names if n in params}
 
 
+# Person 1's timed_run / index_size_bytes / measure_write_latency can only build ONE plain
+# CREATE INDEX. For a rewrite, a partition or several indexes there is nothing they can
+# measure, so those numbers stay None and the page shows "not measured".
+ONE_CREATE_INDEX = re.compile(r"\s*CREATE\s+(UNIQUE\s+)?INDEX\b[^;]*;?\s*", re.I | re.S)
+
+
+def _single_create_index(best, deploy_sql):
+    return best.get("kind") == "index" and bool(ONE_CREATE_INDEX.fullmatch(deploy_sql or ""))
+
+
+def _measured(what, measure_fn, allowed, match):
+    """One real measurement, or None. A failure of ANY kind (ValueError, database error...)
+    also gives None plus an audit event (exception TYPE only: the message can hold real
+    names). analyze() must never crash because a measurement failed."""
+    if not allowed:
+        return None
+    try:
+        return measure_fn()
+    except Exception as e:                               # noqa: BLE001
+        llm.audit_event("measurement_failed", query_id=match["query_id"], what=what,
+                        error=type(e).__name__)
+        return None
+
+
 def analyze(question):
     # The raw question and any pasted SQL are UNTRUSTED and may hold real names,
     # emails or amounts. The raw question was used above for matching ONLY. From
@@ -371,7 +395,7 @@ def analyze(question):
             r["unsafe_rewrite"] = True
             r["warning"] = "UNSAFE REWRITE: returns different rows than the original. Do not deploy."
     recs.sort(key=lambda r: bool(r.get("unsafe_rewrite")))     # stable: only moves unsafe ones down
-    best = recs[0]
+    best = recs[0] if recs else {}
     masked_result = {"masked_query": masked_sql, "masked_plan": masked_plan,
                      "bitmask": bitmask, "bottleneck": bottleneck, "recommendations": recs}
     llm_out = llm.explain(masked_result, lambda text: is_clean(text, free_text=True))
@@ -382,9 +406,14 @@ def analyze(question):
                   and mask.verify_no_leak(explanation, mapping, free_text=True))
 
     # ---- back on the real side: un-mask only for the admin's screen ----
-    deploy_sql = mask.unmask(best["action"], mapping)
-    t_before = sandbox.timed_run(q["sql"])
-    t_after = sandbox.timed_run(q["sql"], [deploy_sql])
+    deploy_sql = mask.unmask(best.get("action") or "", mapping)
+    measure = _single_create_index(best, deploy_sql)
+    t_before = _measured("time_before", lambda: sandbox.timed_run(q["sql"]), measure, match)
+    t_after = _measured("time_after", lambda: sandbox.timed_run(q["sql"], [deploy_sql]), measure, match)
+    write_ms = _measured("write_latency", lambda: sandbox.measure_write_latency(deploy_sql)["delta_ms"],
+                         measure, match)
+    storage = _measured("storage", lambda: sandbox.index_size_bytes(deploy_sql), measure, match)
+    pct = tradeoff.improvement(best.get("cost_before"), best.get("cost_after"))
     return {
         "query_id": q["id"],
         "masked_query": masked_sql,
@@ -392,13 +421,13 @@ def analyze(question):
         "bitmask": bitmask,
         "bottleneck": bottleneck,
         "recommendations": recs,
-        "cost_before": best["cost_before"],
-        "cost_after": best["cost_after"],
-        "improvement_pct": round(100 * (1 - best["cost_after"] / best["cost_before"]), 1),
+        "cost_before": best.get("cost_before"),
+        "cost_after": best.get("cost_after"),
+        "improvement_pct": round(pct, 1) if pct is not None else None,
         "time_before_ms": t_before,
         "time_after_ms": t_after,
-        "write_latency_ms": sandbox.measure_write_latency(deploy_sql)["delta_ms"],
-        "storage_bytes": sandbox.index_size_bytes(deploy_sql),
+        "write_latency_ms": write_ms,
+        "storage_bytes": storage,
         "explanation": explanation,
         "deploy_sql": deploy_sql,
         "leak_check": leak_check,
