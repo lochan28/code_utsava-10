@@ -28,6 +28,17 @@ def pick_query(question):
     return best
 
 
+def explain_safely(masked_result, mapping):
+    """Leak-check the payload BEFORE it reaches the LLM, then the LLM's text on its own.
+    Returns (explanation, leak_check). Nothing leaking ever reaches the LLM or the screen."""
+    if not mask.verify_no_leak(json.dumps(masked_result), mapping):
+        return "Explanation blocked: the payload failed the leak check.", False
+    explanation = llm.explain(masked_result)
+    if not mask.verify_no_leak(explanation, mapping, free_text=True):
+        return "Explanation withheld: it failed the leak check.", False
+    return explanation, True
+
+
 def analyze(question):
     q = pick_query(question)
     mapping = mask.build_mapping()                      # private, stays here
@@ -47,10 +58,7 @@ def analyze(question):
     best = recs[0]
     masked_result = {"masked_query": masked_sql, "masked_plan": masked_plan,
                      "bitmask": bitmask, "bottleneck": bottleneck, "recommendations": recs}
-    explanation = llm.explain(masked_result)
-
-    # Everything the AI saw or produced must be free of real names/values.
-    leak_check = mask.verify_no_leak(json.dumps(masked_result) + explanation, mapping)
+    explanation, leak_check = explain_safely(masked_result, mapping)
 
     # ---- back on the real side: un-mask only for the admin's screen ----
     deploy_sql = mask.unmask(best["action"], mapping)
