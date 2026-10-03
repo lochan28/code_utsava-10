@@ -13,7 +13,16 @@ import pipeline  # noqa: E402
 st.title("AI Database Tuner")
 question = st.chat_input("Ask about a slow report, e.g. 'Why is the weekly sales report slow?'")
 if question:
-    r = pipeline.analyze(question)
+    try:
+        r = pipeline.analyze(question)
+    except ValueError as e:          # e.g. pasted SQL that is not a single read-only SELECT
+        st.error(str(e))
+        st.stop()
+    m = r.get("match")
+    if m:
+        st.caption(f"Matched **{m['name']}** ({m['query_id']}), {m['confidence']:.0%} sure "
+                   f"· method: {m['method']}"
+                   + (f" · runner-up: {m['runner_up']}" if m["runner_up"] else ""))
     st.write(f"**Query:** {r['query_id']}  |  **Privacy:** "
              f"{'0 raw values exposed' if r['leak_check'] else 'LEAK DETECTED'}")
     st.code(r["masked_query"], language="sql")

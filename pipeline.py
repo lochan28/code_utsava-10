@@ -7,6 +7,11 @@ on the left (db/, privacy/), only masked data crosses to ai/ and app/llm.py.
 Self-test:  .venv/Scripts/python pipeline.py
 """
 import json
+import math
+import re
+
+import sqlglot
+from sqlglot import exp
 
 from ai import gnn, rl
 from app import llm
@@ -16,20 +21,121 @@ from privacy import mask
 # ============================================================
 # TUNABLE SETTINGS
 # ============================================================
-DEFAULT_QUERY_ID = "q11"   # used when the question matches no query name
+MIN_CONFIDENCE = 0.35      # Below this, the question is "not understood" and we
+                           # analyse the slowest query from the log instead.
+                           # Raise it -> fewer wrong guesses but more fallbacks.
+TIE_PENALTY = 0.5          # How much a close runner-up lowers confidence.
+                           # 0 = ignore ties, 1 = a perfect tie gives 0% confidence.
+DEFAULT_QUERY_ID = "q11"   # Last resort if the slow-query log is empty too.
+
+# Extra words an admin might use for each known query (on top of its name).
+KEYWORDS = {
+    "q01": "customer order history past purchases",
+    "q02": "monthly sales report region revenue",
+    "q03": "recent pending orders open unshipped",
+    "q04": "lifetime spend corporate customer total",
+    "q05": "august orders month",
+    "q06": "top electronics last quarter best selling products",
+    "q07": "customers never ordered inactive no orders",
+    "q08": "monthly revenue 2025 yearly annual",
+    "q09": "orders customer or product either",
+    "q10": "buyers of one product who bought",
+    "q11": "weekly sales report region dashboard",
+}
+# Different words with the same meaning -> one word (applied after plural-stripping).
+SYNONYMS = {
+    "client": "customer", "user": "customer", "buyer": "customer",
+    "purchase": "order", "sale": "sales", "earning": "revenue", "income": "revenue",
+    "week": "weekly", "month": "monthly", "year": "yearly", "annual": "yearly",
+    "bestselling": "top", "dashboard": "report",
+}
+# Words that carry no meaning for matching.
+STOPWORDS = set("why is the a an of for my our are was so very slow slower taking "
+                "long time timing out it this that what how show me get report's "
+                "query queries down lagging lag hang hanging to in on by".split())
 
 
-def pick_query(question):
-    """Match the admin's question to one of our known slow queries by shared words."""
-    words = set(question.lower().replace("?", "").split())
-    best = max(queries.QUERIES, key=lambda q: len(words & set(q["name"].lower().split())))
-    if not words & set(best["name"].lower().split()):
-        best = queries.get(DEFAULT_QUERY_ID)
-    return best
+def _tokens(text):
+    """Lowercase words, plurals stripped, synonyms merged, filler words removed."""
+    out = []
+    for w in re.findall(r"[a-z0-9]+", text.lower()):
+        if w in STOPWORDS:
+            continue
+        if len(w) > 3 and w.endswith("s") and not w.endswith("ss"):
+            w = w[:-1]
+        out.append(SYNONYMS.get(w, w))
+    return out
+
+
+# Each query's vocabulary = its name + its extra keywords.
+_VOCAB = {q["id"]: set(_tokens(q["name"] + " " + KEYWORDS.get(q["id"], "")))
+          for q in queries.QUERIES}
+# Rare words (e.g. "weekly") say more than common ones (e.g. "order"): weight by IDF.
+_IDF = {w: math.log(1 + len(_VOCAB) / sum(w in v for v in _VOCAB.values()))
+        for v in _VOCAB.values() for w in v}
+
+
+def _looks_like_sql(text):
+    return re.match(r"\s*(select|with)\b", text, re.I) is not None
+
+
+def _read_only_sql(text):
+    """Accept exactly one read-only SELECT; reject anything that could change data."""
+    try:
+        stmts = [s for s in sqlglot.parse(text, read="postgres") if s is not None]
+    except sqlglot.errors.ParseError as e:
+        raise ValueError(f"Could not parse the pasted SQL: {e}") from None
+    if len(stmts) != 1:
+        raise ValueError("Paste exactly one SQL statement.")
+    if not isinstance(stmts[0], exp.Query) or stmts[0].find(
+            exp.Insert, exp.Update, exp.Delete, exp.Drop, exp.Create, exp.Alter):
+        raise ValueError("Only read-only SELECT queries can be analysed.")
+    return stmts[0].sql(dialect="postgres")
+
+
+def match_question(question):
+    """Decide which query to analyse.
+
+    Returns (query, match) where query = {"id", "name", "sql"} and
+    match = {"query_id", "name", "confidence" (0-1), "method", "runner_up"}.
+    """
+    if _looks_like_sql(question):
+        sql = _read_only_sql(question)
+        q = {"id": "adhoc", "name": "Pasted SQL (new, unseen query)", "sql": sql}
+        return q, {"query_id": "adhoc", "name": q["name"], "confidence": 1.0,
+                   "method": "raw SQL", "runner_up": None}
+
+    words = [w for w in _tokens(question) if w in _IDF]   # ignore words no query knows
+    total = sum(_IDF[w] for w in set(words))
+    scores = sorted(((sum(_IDF[w] for w in set(words) if w in vocab), qid)
+                     for qid, vocab in _VOCAB.items()), reverse=True)
+    (best, best_id), (second, second_id) = scores[0], scores[1]
+    confidence = 0.0
+    if total > 0 and best > 0:
+        coverage = best / total                  # share of the question we explained
+        confidence = coverage * (1 - TIE_PENALTY * second / best)
+    if confidence >= MIN_CONFIDENCE:
+        q = queries.get(best_id)
+        return q, {"query_id": q["id"], "name": q["name"], "confidence": round(confidence, 2),
+                   "method": "keywords",
+                   "runner_up": second_id if second > 0 else None}
+
+    # Not understood: analyse the slowest query in the log instead of guessing.
+    slow = sandbox.slow_queries(limit=1)
+    if slow:
+        known = {x["id"] for x in queries.QUERIES}
+        s = slow[0]
+        q = (queries.get(s["query_id"]) if s["query_id"] in known
+             else {"id": str(s["query_id"]), "name": "Slowest query in the log", "sql": s["sql"]})
+        method = "fallback: slowest query in log"
+    else:
+        q, method = queries.get(DEFAULT_QUERY_ID), "fallback: default query"
+    return q, {"query_id": q["id"], "name": q["name"], "confidence": round(confidence, 2),
+               "method": method, "runner_up": None}
 
 
 def analyze(question):
-    q = pick_query(question)
+    q, match = match_question(question)
     mapping = mask.build_mapping()                      # private, stays here
 
     # ---- real side: only db/ and privacy/ see real SQL ----
@@ -73,6 +179,9 @@ def analyze(question):
         "explanation": explanation,
         "deploy_sql": deploy_sql,
         "leak_check": leak_check,
+        # Extra key (not in the original contract; adding it breaks nobody):
+        # how the question was matched, for the "matched X, 82% sure" line.
+        "match": match,
     }
 
 
