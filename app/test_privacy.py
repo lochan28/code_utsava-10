@@ -78,7 +78,7 @@ def test_question_with_a_name_never_reaches_prompt_log_or_cache_key():
     question = "why is Rahul Sharma's page slow"
     with fresh_audit_log() as path:
         r = pipeline.analyze(question)
-        prompt = llm.get_audit_log()[-1]["prompt"]
+        prompt = [e for e in llm.get_audit_log() if e["event"] == "llm_call"][-1]["prompt"]   # not just the last event
         key = pipeline.cache_key(r["match"], r["masked_query"])
         print(f"      question : {question!r} -> matched {r['match']['query_id']} ({r['match']['confidence']:.0%})")
         print(f"      prompt   : {len(prompt)} chars, first line of query part: "
