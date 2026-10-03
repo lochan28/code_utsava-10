@@ -45,6 +45,12 @@ _INDEX_SQL = re.compile(
     r"^\s*CREATE\s+(UNIQUE\s+)?INDEX\s+(\w+\s+)?ON\s+(?P<table>[\w.]+)\s*(USING\s+\w+\s*)?\([^;]+\)\s*;?\s*$",
     re.IGNORECASE)
 
+# Partitioning action, format agreed with Person 3 (masked form:
+# "PARTITION t_a3f BY RANGE (c_d42) MONTHLY"). Only monthly date ranges for now.
+_PARTITION_SQL = re.compile(
+    r"^\s*PARTITION\s+(?P<table>\w+)\s+BY\s+RANGE\s*\(\s*(?P<column>\w+)\s*\)\s+MONTHLY\s*;?\s*$",
+    re.IGNORECASE)
+
 _conn = None
 _sandbox_conn = None
 
@@ -113,6 +119,59 @@ def ensure_sandbox():
         raise
 
 
+def ensure_partitioned_copy(table, column):
+    """Build (once) a copy of `table` split into one partition per month of
+    `column`, in its own schema "part_<table>_<column>". The other tables are
+    views onto the sandbox copies, so any query runs there unchanged.
+    Returns the schema name. Never touches public."""
+    schema = f"part_{table}_{column}"
+    ensure_sandbox()
+    conn = _sandbox_connection()
+    try:
+        conn.execute("SELECT pg_advisory_xact_lock(%s)", (SANDBOX_LOCK_ID,))
+        if conn.execute("SELECT to_regclass(%s)", (f"{schema}.{table}",)).fetchone()[0]:
+            conn.rollback()
+            return schema
+        kind = conn.execute(
+            "SELECT data_type FROM information_schema.columns "
+            "WHERE table_schema = %s AND table_name = %s AND column_name = %s",
+            (SANDBOX_SCHEMA, table, column)).fetchone()
+        if kind is None or not kind[0].startswith(("date", "timestamp")):
+            raise ValueError(f"Can only partition by a date column, not {table}.{column}")
+        pk = [r[0] for r in conn.execute(
+            "SELECT a.attname FROM pg_index i JOIN pg_attribute a "
+            "ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) "
+            "WHERE i.indrelid = %s::regclass AND i.indisprimary", (f"{SANDBOX_SCHEMA}.{table}",))]
+
+        conn.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+        conn.execute(f"CREATE SCHEMA {schema}")
+        conn.execute(f"CREATE TABLE {schema}.{table} (LIKE {SANDBOX_SCHEMA}.{table} INCLUDING DEFAULTS) "
+                     f"PARTITION BY RANGE ({column})")
+        first, last = conn.execute(
+            f"SELECT date_trunc('month', min({column}))::date, max({column}) "
+            f"FROM {SANDBOX_SCHEMA}.{table}").fetchone()
+        months = [m for (m,) in conn.execute(
+            "SELECT generate_series(%s::date, %s::date, interval '1 month')::date", (first, last))]
+        for m in months:
+            conn.execute(f"CREATE TABLE {schema}.{table}_{m:%Y_%m} PARTITION OF {schema}.{table} "
+                         f"FOR VALUES FROM ('{m}') TO ('{m}'::date + interval '1 month')")
+        conn.execute(f"CREATE TABLE {schema}.{table}_other PARTITION OF {schema}.{table} DEFAULT")
+        # A partitioned table's primary key must include the partition column.
+        if pk:
+            key = pk + ([column] if column not in pk else [])
+            conn.execute(f"ALTER TABLE {schema}.{table} ADD PRIMARY KEY ({', '.join(key)})")
+        conn.execute(f"INSERT INTO {schema}.{table} SELECT * FROM {SANDBOX_SCHEMA}.{table}")
+        conn.execute(f"ANALYZE {schema}.{table}")
+        for other in SANDBOX_TABLES:
+            if other != table:
+                conn.execute(f"CREATE VIEW {schema}.{other} AS SELECT * FROM {SANDBOX_SCHEMA}.{other}")
+        conn.commit()
+        return schema
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def _check_select(sql):
     """Allow exactly ONE read-only query (SELECT / WITH ... SELECT / UNION)."""
     statements = [s for s in sqlglot.parse(sql, read="postgres") if s is not None]
@@ -126,23 +185,44 @@ def get_plan(sql):
     return _connection().execute("EXPLAIN (FORMAT JSON) " + sql).fetchone()[0][0]
 
 
+def _split_actions(actions):
+    """Separate a list of actions into (partition schema or None, index SQLs).
+    At most one "PARTITION <table> BY RANGE (<column>) MONTHLY" is allowed;
+    with a partition, index tables must be plain names (they then resolve to
+    the partitioned copy)."""
+    partitions = [a for a in actions if _PARTITION_SQL.match(a)]
+    indexes = [a for a in actions if not _PARTITION_SQL.match(a)]
+    if len(partitions) > 1:
+        raise ValueError("At most one PARTITION action at a time")
+    for index_sql in indexes:
+        (_check_sandbox_index if partitions else _check_index_sql)(index_sql)
+    if not partitions:
+        return None, indexes
+    m = _PARTITION_SQL.match(partitions[0])
+    return ensure_partitioned_copy(m["table"], m["column"]), indexes
+
+
 def cost(sql, hypo_indexes=[]):
-    """Planner total cost, optionally with HypoPG hypothetical indexes.
+    """Planner total cost, optionally with HypoPG hypothetical indexes and/or
+    one "PARTITION orders BY RANGE (order_date) MONTHLY" action.
 
     The pretend indexes exist only inside this connection and are wiped
     before and after every call, so no real index is ever created and other
-    users of the database never see them.
+    users of the database never see them. A PARTITION action makes the query
+    run against the partitioned sandbox copy instead (built once, ~6 s).
     """
-    for index_sql in hypo_indexes:
-        _check_index_sql(index_sql)
+    schema, indexes = _split_actions(hypo_indexes)
     conn = _connection()
     try:
+        if schema:
+            conn.execute(f"SET search_path = {schema}, public")   # public: HypoPG functions
         conn.execute("SELECT hypopg_reset()")
-        for index_sql in hypo_indexes:
+        for index_sql in indexes:
             conn.execute("SELECT * FROM hypopg_create_index(%s)", (index_sql,))
         return float(get_plan(sql)["Plan"]["Total Cost"])
     finally:
         conn.execute("SELECT hypopg_reset()")
+        conn.execute("RESET search_path")
 
 
 def index_size_bytes(index_sql):
@@ -249,15 +329,20 @@ def _sandbox_run(sql, index_sqls, with_checksum):
     """Shared by timed_run() and checked_run(): build the indexes for real on
     the sandbox copies, lock the transaction read-only, time sql (median of
     TIMING_REPEATS after a warm-up), optionally fingerprint its result rows,
-    then roll everything back so the indexes vanish."""
+    then roll everything back so the indexes vanish. A PARTITION action in
+    index_sqls runs everything on the partitioned copy instead."""
     _check_select(sql)
     for index_sql in index_sqls:
-        _check_sandbox_index(index_sql)
+        if not _PARTITION_SQL.match(index_sql):
+            _check_sandbox_index(index_sql)
     ensure_sandbox()
+    schema, indexes = _split_actions(index_sqls)
     conn = _sandbox_connection()
     try:
         conn.execute("SELECT pg_advisory_xact_lock(%s)", (SANDBOX_LOCK_ID,))
-        for index_sql in index_sqls:
+        if schema:
+            conn.execute(f"SET LOCAL search_path = {schema}")    # undone by the rollback
+        for index_sql in indexes:
             conn.execute(index_sql)
         conn.execute("SET transaction_read_only = on")   # the query can't change anything
         times = []
