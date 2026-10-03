@@ -42,6 +42,9 @@ def rig_targets():
     return fns + [(psycopg, "connect", explode)]
 
 
+EXPL_MASKED, EXPL_REAL = "Table t_491 is read in full.", "Table customers is read in full."
+
+
 def approve_result(top_first=True):
     """A finished analysis: a measured rewrite (the top pick), a simulated index, an unsafe rewrite."""
     s = sample_data.SAMPLE_RECOMMENDATIONS
@@ -51,6 +54,7 @@ def approve_result(top_first=True):
     r = full(recommendations=recs)
     r["deploy_scripts"] = [script_of[id(x)] for x in recs]
     r["deploy_sql"] = r["deploy_scripts"][0]
+    r["explanation"], r["explanation_unmasked"] = EXPL_MASKED, EXPL_REAL
     return r
 
 
@@ -155,6 +159,20 @@ def test_real_values_appear_only_inside_the_script():
         rest = page_text(at).replace(script, "")                                # the page WITHOUT the script
         assert "Rahul" in script and "90210" in script
         assert "rahul" not in rest.lower() and "90210" not in rest, "a real value leaked outside the script"
+
+
+def test_the_unmasked_explanation_is_shown_only_inside_the_approve_section_after_the_click():
+    with page_with(approve_result()) as at:
+        before = page_text(at)
+        assert EXPL_REAL not in before and "customers" not in before and EXPL_MASKED in before
+        approve_buttons(at)[0].click().run()
+        assert not at.exception
+        after = page_text(at)
+        assert EXPL_REAL in after and "Explanation with your real names" in after
+        assert EXPL_MASKED in after                                   # the masked explanation stays as it was
+        assert [t.value for t in at.text if t.value == EXPL_REAL] == [EXPL_REAL]
+        rest = after.replace(script_on(at), "").replace(EXPL_REAL, "")
+        assert "customers" not in rest and "rahul" not in rest.lower(), "real names leaked outside the Approve section"
 
 
 def test_approval_survives_reruns_and_each_analysis_needs_its_own_click():

@@ -474,6 +474,9 @@ def analyze(question):
     deploy_scripts = [restore(mask.unmask(rec.get("action") or "", mapping)) if isinstance(rec, dict) else ""
                       for rec in recs]
     deploy_sql = deploy_scripts[0] if deploy_scripts else ""
+    # Same restore point: the explanation with the admin's real names put back. It is built from
+    # the FINISHED explanation, so it can never reach a prompt, and only the Approve step shows it.
+    explanation_unmasked = restore(mask.unmask(explanation, mapping))
     measure = _single_create_index(best, deploy_sql)
     t_before = _measured("time_before", lambda: sandbox.timed_run(q["sql"]), measure, match)
     t_after = _measured("time_after", lambda: sandbox.timed_run(q["sql"], [deploy_sql]), measure, match)
@@ -496,6 +499,8 @@ def analyze(question):
         "write_latency_ms": write_ms,
         "storage_bytes": storage,
         "explanation": explanation,
+        # Extra key: the explanation with real names. Approve step only (after the click).
+        "explanation_unmasked": explanation_unmasked,
         "deploy_sql": deploy_sql,
         # Extra key: the un-masked fix for EACH recommendation (same order as "recommendations"),
         # for the Approve step only. Real values: nothing but the Approve step may show them.

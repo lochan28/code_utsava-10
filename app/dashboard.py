@@ -304,6 +304,9 @@ def render_approve(r, key):
         st.code(script, language="sql")            # has its own copy button
         st.download_button("Download as .sql", data=script, file_name="approved_fix.sql",
                            mime="text/plain", key=f"download_{key}")
+        if r.get("explanation_unmasked"):          # real names: shown here and nowhere else
+            st.markdown("**Explanation with your real names**")
+            st.text(r["explanation_unmasked"])     # plain text: nothing in it can be read as markup
 
 
 # ------------------------------------------------------------------

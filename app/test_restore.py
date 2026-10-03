@@ -88,7 +88,10 @@ def real_values_in(text):
     return [v for v in SENSITIVE if v.lower() in text.lower()]
 
 
-def run_tripwire(module):
+LAST = {}          # the result of the most recent run_tripwire call
+
+
+def run_tripwire(module, reply="Canned explanation."):
     """Run `module.analyze` on a query full of real values and report where they showed up.
     Returns (handed to the AI side, sandbox saw them, result without the script, audit log, deploy_sql)."""
     rewrite_m = masked_like_the_pipeline(REWRITE_B)
@@ -123,7 +126,7 @@ def run_tripwire(module):
 
     def call_ollama(prompt):
         to_ai.append(prompt)
-        return "Canned explanation.", {}
+        return reply, {}
 
     with ExitStack() as stack:
         stack.enter_context(fresh_audit_log())
@@ -133,9 +136,10 @@ def run_tripwire(module):
                                  (sandbox, "checked_run", spying_run), (sandbox, "cost", spying_cost)]:
             stack.enter_context(patched(obj, name, value))
         r = module.analyze(SQL_B)
+        LAST["result"] = r
         audit = json.dumps(llm.get_audit_log(), default=str)
-    # deploy_sql / deploy_scripts ARE the Approve text, the one place real values may live
-    result_without_script = json.dumps({k: v for k, v in r.items() if k not in ("deploy_sql", "deploy_scripts")},
+    # deploy_sql / deploy_scripts / explanation_unmasked ARE the Approve text, the one place real values may live
+    result_without_script = json.dumps({k: v for k, v in r.items() if k not in ("deploy_sql", "deploy_scripts", "explanation_unmasked")},
                                        default=str)
     return to_ai, sandbox_saw, result_without_script, audit, r["deploy_sql"]
 
@@ -159,6 +163,20 @@ def test_tripwire_no_real_value_reaches_ai_the_llm_the_log_or_the_result():
     assert any(all(v in s for v in SENSITIVE) and "$" not in s for s in sandbox_saw), "sandbox never got the real values"
     assert all(v in deploy for v in SENSITIVE), "the Approve script is missing the real values"
     assert "$1" not in deploy
+
+
+def test_explanation_unmasked_has_real_names_and_never_reaches_ai_the_log_or_a_prompt():
+    t = mask.build_mapping().tables
+    reply = f"The table {t['customers']} is read in full, and {t['orders']} is joined to it."
+    to_ai, _, result, audit, _ = run_tripwire(pipeline, reply)
+    r = LAST["result"]
+    assert "customers" in r["explanation_unmasked"] and "orders" in r["explanation_unmasked"]
+    assert t["customers"] not in r["explanation_unmasked"]              # codes decoded
+    assert t["customers"] in r["explanation"] and "customers" not in r["explanation"]   # the masked one is unchanged
+    for place, text in (("handed to ai/ or llm.explain", " ".join(to_ai)), ("the audit log", audit),
+                        ("the result", result)):
+        assert "customers" not in text.lower().replace("t_customers", ""), place
+        assert r["explanation_unmasked"] not in text, place
 
 
 # ---------------------------------------------------------------- (c) the tripwire has teeth
