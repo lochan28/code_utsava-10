@@ -145,6 +145,31 @@ def cache_key(match, masked_sql):
     return "known:" + str(match["query_id"])
 
 
+def _keyword_scores(question):
+    """(confidence 0-1, best query id, runner-up id or None). Pure text: no database."""
+    words = [w for w in _tokens(question) if w in _IDF]   # ignore words no query knows
+    total = sum(_IDF[w] for w in set(words))
+    scores = sorted(((sum(_IDF[w] for w in set(words) if w in vocab), qid)
+                     for qid, vocab in _VOCAB.items()), reverse=True)
+    (best, best_id), (second, second_id) = scores[0], scores[1]
+    confidence = 0.0
+    if total > 0 and best > 0:
+        coverage = best / total                  # share of the question we explained
+        confidence = coverage * (1 - TIE_PENALTY * second / best)
+    return confidence, best_id, (second_id if second > 0 else None)
+
+
+def keyword_match(question):
+    """(query, match) if the words of `question` clearly point at one demo query, else None.
+    Never touches the database (Demo mode uses this)."""
+    confidence, best_id, runner_up = _keyword_scores(question)
+    if confidence < MIN_CONFIDENCE:
+        return None
+    q = queries.get(best_id)
+    return q, {"query_id": q["id"], "name": q["name"], "confidence": round(confidence, 2),
+               "method": "keywords", "runner_up": runner_up}
+
+
 def match_question(question):
     """Decide which query to analyse.
 
@@ -157,20 +182,11 @@ def match_question(question):
         return q, {"query_id": "adhoc", "name": q["name"], "confidence": 1.0,
                    "method": "raw SQL", "runner_up": None}
 
-    words = [w for w in _tokens(question) if w in _IDF]   # ignore words no query knows
-    total = sum(_IDF[w] for w in set(words))
-    scores = sorted(((sum(_IDF[w] for w in set(words) if w in vocab), qid)
-                     for qid, vocab in _VOCAB.items()), reverse=True)
-    (best, best_id), (second, second_id) = scores[0], scores[1]
-    confidence = 0.0
-    if total > 0 and best > 0:
-        coverage = best / total                  # share of the question we explained
-        confidence = coverage * (1 - TIE_PENALTY * second / best)
+    confidence, best_id, runner_up = _keyword_scores(question)
     if confidence >= MIN_CONFIDENCE:
         q = queries.get(best_id)
         return q, {"query_id": q["id"], "name": q["name"], "confidence": round(confidence, 2),
-                   "method": "keywords",
-                   "runner_up": second_id if second > 0 else None}
+                   "method": "keywords", "runner_up": runner_up}
 
     # Not understood: analyse the slowest query in the log instead of guessing.
     slow = sandbox.slow_queries(limit=1)

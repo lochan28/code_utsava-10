@@ -315,7 +315,7 @@ def test_page_has_no_real_name_anywhere_in_the_4c_panels():
 def test_sample_variants_each_show_the_right_state():
     at, patches = open_page()
     with patches:
-        at.sidebar.toggle[0].set_value(True).run()
+        at.sidebar.toggle(key="show_sample").set_value(True).run()
         assert at.sidebar.radio[0].value == sample_data.VARIANTS[0]          # the normal one is the default
         expect = {}
         for variant in sample_data.VARIANTS:

@@ -1,0 +1,2195 @@
+{
+ "q01": {
+  "query_id": "q01",
+  "masked_query": "SELECT c_5b1, c_303, c_c37, c_e7e FROM t_438 WHERE c_720 = $1 ORDER BY c_303 DESC",
+  "masked_plan": {
+   "Plan": {
+    "Node Type": "Gather Merge",
+    "Parallel Aware": false,
+    "Async Capable": false,
+    "Startup Cost": 15820.39,
+    "Total Cost": 15907.9,
+    "Plan Rows": 750,
+    "Plan Width": 28,
+    "Workers Planned": 2,
+    "Plans": [
+     {
+      "Node Type": "Sort",
+      "Parent Relationship": "Outer",
+      "Parallel Aware": false,
+      "Async Capable": false,
+      "Startup Cost": 14820.37,
+      "Total Cost": 14821.3,
+      "Plan Rows": 375,
+      "Plan Width": 28,
+      "Sort Key": [
+       "c_303 DESC"
+      ],
+      "Plans": [
+       {
+        "Node Type": "Seq Scan",
+        "Parent Relationship": "Outer",
+        "Parallel Aware": true,
+        "Async Capable": false,
+        "Relation Name": "t_438",
+        "Alias": "t_438",
+        "Startup Cost": 0.0,
+        "Total Cost": 14804.33,
+        "Plan Rows": 375,
+        "Plan Width": 28,
+        "Filter": "(c_720 = $1)"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "bitmask": {
+   "filter": "000000010000000000000",
+   "join": "000000000000000000000",
+   "group": "000000000000000000000",
+   "columns": [
+    "t_491.c_720",
+    "t_491.c_2e4",
+    "t_491.c_b0b",
+    "t_491.c_13b",
+    "t_491.c_fdf",
+    "t_491.c_b76",
+    "t_438.c_5b1",
+    "t_438.c_720",
+    "t_438.c_13b",
+    "t_438.c_328",
+    "t_438.c_303",
+    "t_438.c_910",
+    "t_438.c_c37",
+    "t_438.c_e7e",
+    "t_dcb.c_328",
+    "t_dcb.c_2e4",
+    "t_dcb.c_de3",
+    "t_dcb.c_3f6",
+    "t_b78.c_13b",
+    "t_b78.c_2e4",
+    "t_b78.c_b5e"
+   ]
+  },
+  "bottleneck": {
+   "node_id": 2,
+   "operator": "Seq Scan",
+   "relation": "t_438",
+   "rows": 375,
+   "cost_share_pct": 93.1,
+   "reason": "Seq Scan on t_438 is the bottleneck: it handles about 375 rows and accounts for about 93.1% of the plan's estimated cost.",
+   "op": "Seq Scan",
+   "evidence": {
+    "relation": "t_438",
+    "plan_rows": 375,
+    "actual_rows": null,
+    "loops": 1,
+    "self_cost": 14804.33,
+    "cost_share_pct": 93.1,
+    "picked_by": "rules"
+   },
+   "path": "rules"
+  },
+  "recommendations": [
+   {
+    "kind": "index",
+    "action": "CREATE INDEX ON t_438 (c_720)",
+    "cost_before": 15907.9,
+    "novelty": "seen query shape",
+    "agent_score": 0.923,
+    "write_penalty": 0.03,
+    "verified_by": "hypopg_cost",
+    "reason": "Exact-match filter: simulated cost 15,908 -> 2,744 (82.7% lower).",
+    "cost_after": 2744.32,
+    "improvement_pct": 82.7,
+    "reward": 0.797,
+    "planner_gain_pct": 82.7,
+    "measured_gain_pct": null,
+    "timing_note": "estimated by the planner (not timed: time_fn has no actions parameter)",
+    "write_latency": {
+     "source": "estimated",
+     "note": "width-based write penalty, not measured"
+    },
+    "summary": "Add index on t_438 (c_720) (83% lower cost in the HypoPG sandbox, estimated by the planner (not timed), +1 index column to maintain on writes (estimated, write penalty 0.03)). Zero raw data exposed to the AI (masked metadata only)."
+   }
+  ],
+  "cost_before": 15907.9,
+  "cost_after": 2744.32,
+  "improvement_pct": 82.7,
+  "time_before_ms": 19.45,
+  "time_after_ms": 0.91,
+  "write_latency_ms": 0.00124,
+  "storage_bytes": 8077312,
+  "explanation": "Why it is slow: Seq Scan on t_438 is the bottleneck: it handles about 375 rows and accounts for about 93.1% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=93.1, loops=1, picked_by=rules, plan_rows=375, relation=t_438, self_cost=14804.33). Best fix: CREATE INDEX ON t_438 (c_720) - Exact-match filter: simulated cost 15,908 -> 2,744 (82.7% lower). The planner's estimated cost drops from 15,908 to 2,744, about 83% lower.",
+  "explanation_unmasked": "Why it is slow: Seq Scan on orders is the bottleneck: it handles about 375 rows and accounts for about 93.1% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=93.1, loops=1, picked_by=rules, plan_rows=375, relation=orders, self_cost=14804.33). Best fix: CREATE INDEX ON orders (customer_id) - Exact-match filter: simulated cost 15,908 -> 2,744 (82.7% lower). The planner's estimated cost drops from 15,908 to 2,744, about 83% lower.",
+  "deploy_sql": "CREATE INDEX ON orders (customer_id)",
+  "deploy_scripts": [
+   "CREATE INDEX ON orders (customer_id)"
+  ],
+  "leak_check": true,
+  "match": {
+   "query_id": "q01",
+   "name": "Customer order history",
+   "confidence": 0.76,
+   "method": "keywords",
+   "runner_up": "q09"
+  },
+  "llm": {
+   "source": "template",
+   "prompt_leak_ok": true,
+   "reply_leak_ok": null,
+   "latency_ms": 1.2,
+   "fallback_reason": "LLM unavailable: recording uses the template explanation"
+  },
+  "unsafe_rewrite": false,
+  "ai_inputs": {
+   "time_fn": "used",
+   "stats": "used",
+   "column_types": "used"
+  }
+ },
+ "q02": {
+  "query_id": "q02",
+  "masked_query": "SELECT a3.c_2e4 AS x1, COUNT(*) AS x2, SUM(a1.c_c37) AS x3 FROM t_438 AS a1 JOIN t_491 AS a2 ON a2.c_720 = a1.c_720 JOIN t_b78 AS a3 ON a3.c_13b = a2.c_13b WHERE a1.c_303 BETWEEN $1 AND $2 GROUP BY a3.c_2e4 ORDER BY x3 DESC",
+  "masked_plan": {
+   "Plan": {
+    "Node Type": "Sort",
+    "Parallel Aware": false,
+    "Async Capable": false,
+    "Startup Cost": 18744.79,
+    "Total Cost": 18744.81,
+    "Plan Rows": 10,
+    "Plan Width": 46,
+    "Sort Key": [
+     "(sum(a1.c_c37)) DESC"
+    ],
+    "Plans": [
+     {
+      "Node Type": "Aggregate",
+      "Strategy": "Sorted",
+      "Partial Mode": "Finalize",
+      "Parent Relationship": "Outer",
+      "Parallel Aware": false,
+      "Async Capable": false,
+      "Startup Cost": 18741.96,
+      "Total Cost": 18744.62,
+      "Plan Rows": 10,
+      "Plan Width": 46,
+      "Group Key": [
+       "a3.c_2e4"
+      ],
+      "Plans": [
+       {
+        "Node Type": "Gather Merge",
+        "Parent Relationship": "Outer",
+        "Parallel Aware": false,
+        "Async Capable": false,
+        "Startup Cost": 18741.96,
+        "Total Cost": 18744.3,
+        "Plan Rows": 20,
+        "Plan Width": 46,
+        "Workers Planned": 2,
+        "Plans": [
+         {
+          "Node Type": "Sort",
+          "Parent Relationship": "Outer",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Startup Cost": 17741.94,
+          "Total Cost": 17741.96,
+          "Plan Rows": 10,
+          "Plan Width": 46,
+          "Sort Key": [
+           "a3.c_2e4"
+          ],
+          "Plans": [
+           {
+            "Node Type": "Aggregate",
+            "Strategy": "Hashed",
+            "Partial Mode": "Partial",
+            "Parent Relationship": "Outer",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Startup Cost": 17741.65,
+            "Total Cost": 17741.77,
+            "Plan Rows": 10,
+            "Plan Width": 46,
+            "Group Key": [
+             "a3.c_2e4"
+            ],
+            "Planned Partitions": 0,
+            "Plans": [
+             {
+              "Node Type": "Hash Join",
+              "Parent Relationship": "Outer",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Join Type": "Inner",
+              "Startup Cost": 1734.22,
+              "Total Cost": 17654.31,
+              "Plan Rows": 11645,
+              "Plan Width": 13,
+              "Inner Unique": true,
+              "Hash Cond": "(a2.c_13b = a3.c_13b)",
+              "Plans": [
+               {
+                "Node Type": "Hash Join",
+                "Parent Relationship": "Outer",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Join Type": "Inner",
+                "Startup Cost": 1733.0,
+                "Total Cost": 17609.57,
+                "Plan Rows": 11645,
+                "Plan Width": 11,
+                "Inner Unique": true,
+                "Hash Cond": "(a1.c_720 = a2.c_720)",
+                "Plans": [
+                 {
+                  "Node Type": "Seq Scan",
+                  "Parent Relationship": "Outer",
+                  "Parallel Aware": true,
+                  "Async Capable": false,
+                  "Relation Name": "t_438",
+                  "Alias": "a1",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 15846.0,
+                  "Plan Rows": 11645,
+                  "Plan Width": 11,
+                  "Filter": "((c_303 >= $1::date) AND (c_303 <= $2::date))"
+                 },
+                 {
+                  "Node Type": "Hash",
+                  "Parent Relationship": "Inner",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Startup Cost": 1108.0,
+                  "Total Cost": 1108.0,
+                  "Plan Rows": 50000,
+                  "Plan Width": 8,
+                  "Plans": [
+                   {
+                    "Node Type": "Seq Scan",
+                    "Parent Relationship": "Outer",
+                    "Parallel Aware": false,
+                    "Async Capable": false,
+                    "Relation Name": "t_491",
+                    "Alias": "a2",
+                    "Startup Cost": 0.0,
+                    "Total Cost": 1108.0,
+                    "Plan Rows": 50000,
+                    "Plan Width": 8
+                   }
+                  ]
+                 }
+                ]
+               },
+               {
+                "Node Type": "Hash",
+                "Parent Relationship": "Inner",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Startup Cost": 1.1,
+                "Total Cost": 1.1,
+                "Plan Rows": 10,
+                "Plan Width": 10,
+                "Plans": [
+                 {
+                  "Node Type": "Seq Scan",
+                  "Parent Relationship": "Outer",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Relation Name": "t_b78",
+                  "Alias": "a3",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 1.1,
+                  "Plan Rows": 10,
+                  "Plan Width": 10
+                 }
+                ]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "bitmask": {
+   "filter": "000000000010000000000",
+   "join": "100100010000000000100",
+   "group": "000000000000000000010",
+   "columns": [
+    "t_491.c_720",
+    "t_491.c_2e4",
+    "t_491.c_b0b",
+    "t_491.c_13b",
+    "t_491.c_fdf",
+    "t_491.c_b76",
+    "t_438.c_5b1",
+    "t_438.c_720",
+    "t_438.c_13b",
+    "t_438.c_328",
+    "t_438.c_303",
+    "t_438.c_910",
+    "t_438.c_c37",
+    "t_438.c_e7e",
+    "t_dcb.c_328",
+    "t_dcb.c_2e4",
+    "t_dcb.c_de3",
+    "t_dcb.c_3f6",
+    "t_b78.c_13b",
+    "t_b78.c_2e4",
+    "t_b78.c_b5e"
+   ]
+  },
+  "bottleneck": {
+   "node_id": 7,
+   "operator": "Seq Scan",
+   "relation": "t_438",
+   "rows": 11645,
+   "cost_share_pct": 84.5,
+   "reason": "Seq Scan on t_438 is the bottleneck: it handles about 11,645 rows and accounts for about 84.5% of the plan's estimated cost.",
+   "op": "Seq Scan",
+   "evidence": {
+    "relation": "t_438",
+    "plan_rows": 11645,
+    "actual_rows": null,
+    "loops": 1,
+    "self_cost": 15846.0,
+    "cost_share_pct": 84.5,
+    "picked_by": "rules"
+   },
+   "path": "rules"
+  },
+  "recommendations": [
+   {
+    "kind": "partition",
+    "action": "PARTITION t_438 BY RANGE (c_303) MONTHLY",
+    "cost_before": 18744.81,
+    "novelty": "unseen shape (lower confidence)",
+    "agent_score": 0.806,
+    "write_penalty": 0.03,
+    "verified_by": "hypopg_cost",
+    "reason": "Range filter on this column; partitions let the scan skip whole months: simulated cost 18,745 -> 1,515 (91.9% lower).",
+    "cost_after": 1514.94,
+    "improvement_pct": 91.9,
+    "reward": 0.889,
+    "planner_gain_pct": 91.9,
+    "measured_gain_pct": null,
+    "timing_note": "estimated by the planner (not timed: time_fn has no actions parameter)",
+    "summary": "Partition t_438 by c_303 (92% lower cost on a partitioned sandbox copy, estimated by the planner (not timed); write cost not measured). Zero raw data exposed to the AI (masked metadata only).",
+    "why_not": "Index on t_438(c_303) not chosen: it cuts the simulated cost by only 32% vs 92% for the chosen fix."
+   },
+   {
+    "kind": "index",
+    "action": "CREATE INDEX ON t_438 (c_303)",
+    "cost_before": 18744.81,
+    "novelty": "unseen shape (lower confidence)",
+    "agent_score": 0.273,
+    "write_penalty": 0.03,
+    "verified_by": "hypopg_cost",
+    "reason": "Range filter: simulated cost 18,745 -> 12,744 (32.0% lower).",
+    "cost_after": 12743.76,
+    "improvement_pct": 32.0,
+    "reward": 0.29,
+    "planner_gain_pct": 32.0,
+    "measured_gain_pct": null,
+    "timing_note": "estimated by the planner (not timed: time_fn has no actions parameter)",
+    "write_latency": {
+     "source": "estimated",
+     "note": "width-based write penalty, not measured"
+    }
+   }
+  ],
+  "cost_before": 18744.81,
+  "cost_after": 1514.94,
+  "improvement_pct": 91.9,
+  "time_before_ms": null,
+  "time_after_ms": null,
+  "write_latency_ms": null,
+  "storage_bytes": null,
+  "explanation": "Why it is slow: Seq Scan on t_438 is the bottleneck: it handles about 11,645 rows and accounts for about 84.5% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=84.5, loops=1, picked_by=rules, plan_rows=11645, relation=t_438, self_cost=15846.0). Best fix: PARTITION t_438 BY RANGE (c_303) MONTHLY - Range filter on this column; partitions let the scan skip whole months: simulated cost 18,745 -> 1,515 (91.9% lower). The planner's estimated cost drops from 18,745 to 1,515, about 92% lower. 1 other option(s) were also considered.",
+  "explanation_unmasked": "Why it is slow: Seq Scan on orders is the bottleneck: it handles about 11,645 rows and accounts for about 84.5% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=84.5, loops=1, picked_by=rules, plan_rows=11645, relation=orders, self_cost=15846.0). Best fix: PARTITION orders BY RANGE (order_date) MONTHLY - Range filter on this column; partitions let the scan skip whole months: simulated cost 18,745 -> 1,515 (91.9% lower). The planner's estimated cost drops from 18,745 to 1,515, about 92% lower. 1 other option(s) were also considered.",
+  "deploy_sql": "PARTITION orders BY RANGE (order_date) MONTHLY",
+  "deploy_scripts": [
+   "PARTITION orders BY RANGE (order_date) MONTHLY",
+   "CREATE INDEX ON orders (order_date)"
+  ],
+  "leak_check": true,
+  "match": {
+   "query_id": "q02",
+   "name": "Monthly sales report by region",
+   "confidence": 0.61,
+   "method": "keywords",
+   "runner_up": "q11"
+  },
+  "llm": {
+   "source": "template",
+   "prompt_leak_ok": true,
+   "reply_leak_ok": null,
+   "latency_ms": 1.5,
+   "fallback_reason": "LLM unavailable: recording uses the template explanation"
+  },
+  "unsafe_rewrite": false,
+  "ai_inputs": {
+   "time_fn": "used",
+   "stats": "used",
+   "column_types": "used"
+  }
+ },
+ "q03": {
+  "query_id": "q03",
+  "masked_query": "SELECT c_5b1, c_720, c_c37 FROM t_438 WHERE c_e7e = $1 AND c_303 >= $2",
+  "masked_plan": {
+   "Plan": {
+    "Node Type": "Gather",
+    "Parallel Aware": false,
+    "Async Capable": false,
+    "Startup Cost": 1000.0,
+    "Total Cost": 16923.3,
+    "Plan Rows": 773,
+    "Plan Width": 19,
+    "Workers Planned": 2,
+    "Single Copy": false,
+    "Plans": [
+     {
+      "Node Type": "Seq Scan",
+      "Parent Relationship": "Outer",
+      "Parallel Aware": true,
+      "Async Capable": false,
+      "Relation Name": "t_438",
+      "Alias": "t_438",
+      "Startup Cost": 0.0,
+      "Total Cost": 15846.0,
+      "Plan Rows": 322,
+      "Plan Width": 19,
+      "Filter": "((c_303 >= $2::date) AND (c_e7e = $1::text))"
+     }
+    ]
+   }
+  },
+  "bitmask": {
+   "filter": "000000000010010000000",
+   "join": "000000000000000000000",
+   "group": "000000000000000000000",
+   "columns": [
+    "t_491.c_720",
+    "t_491.c_2e4",
+    "t_491.c_b0b",
+    "t_491.c_13b",
+    "t_491.c_fdf",
+    "t_491.c_b76",
+    "t_438.c_5b1",
+    "t_438.c_720",
+    "t_438.c_13b",
+    "t_438.c_328",
+    "t_438.c_303",
+    "t_438.c_910",
+    "t_438.c_c37",
+    "t_438.c_e7e",
+    "t_dcb.c_328",
+    "t_dcb.c_2e4",
+    "t_dcb.c_de3",
+    "t_dcb.c_3f6",
+    "t_b78.c_13b",
+    "t_b78.c_2e4",
+    "t_b78.c_b5e"
+   ]
+  },
+  "bottleneck": {
+   "node_id": 1,
+   "operator": "Seq Scan",
+   "relation": "t_438",
+   "rows": 322,
+   "cost_share_pct": 93.6,
+   "reason": "Seq Scan on t_438 is the bottleneck: it handles about 322 rows and accounts for about 93.6% of the plan's estimated cost.",
+   "op": "Seq Scan",
+   "evidence": {
+    "relation": "t_438",
+    "plan_rows": 322,
+    "actual_rows": null,
+    "loops": 1,
+    "self_cost": 15846.0,
+    "cost_share_pct": 93.6,
+    "picked_by": "rules"
+   },
+   "path": "rules"
+  },
+  "recommendations": [
+   {
+    "kind": "partition",
+    "action": "PARTITION t_438 BY RANGE (c_303) MONTHLY",
+    "cost_before": 16923.3,
+    "novelty": "seen query shape",
+    "agent_score": 0.928,
+    "write_penalty": 0.03,
+    "verified_by": "hypopg_cost",
+    "reason": "Range filter on this column; partitions let the scan skip whole months: simulated cost 16,923 -> 675 (96.0% lower).",
+    "cost_after": 674.95,
+    "improvement_pct": 96.0,
+    "reward": 0.93,
+    "planner_gain_pct": 96.0,
+    "measured_gain_pct": null,
+    "timing_note": "estimated by the planner (not timed: time_fn has no actions parameter)",
+    "summary": "Partition t_438 by c_303 (96% lower cost on a partitioned sandbox copy, estimated by the planner (not timed); write cost not measured). Zero raw data exposed to the AI (masked metadata only).",
+    "why_not": "Index on t_438(c_e7e, c_303) not chosen: it cuts the simulated cost by only 86% vs 96% for the chosen fix."
+   },
+   {
+    "kind": "index",
+    "action": "CREATE INDEX ON t_438 (c_e7e, c_303)",
+    "cost_before": 16923.3,
+    "novelty": "seen query shape",
+    "agent_score": 0.552,
+    "write_penalty": 0.06,
+    "verified_by": "hypopg_cost",
+    "reason": "Exact-match filter(s) then range: simulated cost 16,923 -> 2,390 (85.9% lower).",
+    "cost_after": 2390.08,
+    "improvement_pct": 85.9,
+    "reward": 0.799,
+    "planner_gain_pct": 85.9,
+    "measured_gain_pct": null,
+    "timing_note": "estimated by the planner (not timed: time_fn has no actions parameter)",
+    "write_latency": {
+     "source": "estimated",
+     "note": "width-based write penalty, not measured"
+    }
+   },
+   {
+    "kind": "index",
+    "action": "CREATE INDEX ON t_438 (c_303)",
+    "cost_before": 16923.3,
+    "novelty": "seen query shape",
+    "agent_score": 0.418,
+    "write_penalty": 0.03,
+    "verified_by": "hypopg_cost",
+    "reason": "Range filter: simulated cost 16,923 -> 10,303 (39.1% lower).",
+    "cost_after": 10302.78,
+    "improvement_pct": 39.1,
+    "reward": 0.361,
+    "planner_gain_pct": 39.1,
+    "measured_gain_pct": null,
+    "timing_note": "estimated by the planner (not timed: time_fn has no actions parameter)"
+   }
+  ],
+  "cost_before": 16923.3,
+  "cost_after": 674.95,
+  "improvement_pct": 96.0,
+  "time_before_ms": null,
+  "time_after_ms": null,
+  "write_latency_ms": null,
+  "storage_bytes": null,
+  "explanation": "Why it is slow: Seq Scan on t_438 is the bottleneck: it handles about 322 rows and accounts for about 93.6% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=93.6, loops=1, picked_by=rules, plan_rows=322, relation=t_438, self_cost=15846.0). Best fix: PARTITION t_438 BY RANGE (c_303) MONTHLY - Range filter on this column; partitions let the scan skip whole months: simulated cost 16,923 -> 675 (96.0% lower). The planner's estimated cost drops from 16,923 to 675, about 96% lower. 2 other option(s) were also considered.",
+  "explanation_unmasked": "Why it is slow: Seq Scan on orders is the bottleneck: it handles about 322 rows and accounts for about 93.6% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=93.6, loops=1, picked_by=rules, plan_rows=322, relation=orders, self_cost=15846.0). Best fix: PARTITION orders BY RANGE (order_date) MONTHLY - Range filter on this column; partitions let the scan skip whole months: simulated cost 16,923 -> 675 (96.0% lower). The planner's estimated cost drops from 16,923 to 675, about 96% lower. 2 other option(s) were also considered.",
+  "deploy_sql": "PARTITION orders BY RANGE (order_date) MONTHLY",
+  "deploy_scripts": [
+   "PARTITION orders BY RANGE (order_date) MONTHLY",
+   "CREATE INDEX ON orders (status, order_date)",
+   "CREATE INDEX ON orders (order_date)"
+  ],
+  "leak_check": true,
+  "match": {
+   "query_id": "q03",
+   "name": "Recent pending orders",
+   "confidence": 0.91,
+   "method": "keywords",
+   "runner_up": "q09"
+  },
+  "llm": {
+   "source": "template",
+   "prompt_leak_ok": true,
+   "reply_leak_ok": null,
+   "latency_ms": 1.1,
+   "fallback_reason": "LLM unavailable: recording uses the template explanation"
+  },
+  "unsafe_rewrite": false,
+  "ai_inputs": {
+   "time_fn": "used",
+   "stats": "used",
+   "column_types": "used"
+  }
+ },
+ "q04": {
+  "query_id": "q04",
+  "masked_query": "SELECT a1.c_2e4, (SELECT SUM(a2.c_c37) FROM t_438 AS a2 WHERE a2.c_720 = a1.c_720) AS x1 FROM t_491 AS a1 WHERE a1.c_fdf = $1 AND a1.c_720 <= $2",
+  "masked_plan": {
+   "Plan": {
+    "Node Type": "Index Scan",
+    "Parallel Aware": false,
+    "Async Capable": false,
+    "Scan Direction": "Forward",
+    "Index Name": "i_23d",
+    "Relation Name": "t_491",
+    "Alias": "a1",
+    "Startup Cost": 0.29,
+    "Total Cost": 1369977.51,
+    "Plan Rows": 62,
+    "Plan Width": 43,
+    "Index Cond": "(c_720 <= $2)",
+    "Filter": "(c_fdf = $1::text)",
+    "Plans": [
+     {
+      "Node Type": "Aggregate",
+      "Strategy": "Plain",
+      "Partial Mode": "Simple",
+      "Parent Relationship": "SubPlan",
+      "Subplan Name": "SubPlan 1",
+      "Parallel Aware": false,
+      "Async Capable": false,
+      "Startup Cost": 22096.12,
+      "Total Cost": 22096.13,
+      "Plan Rows": 1,
+      "Plan Width": 32,
+      "Plans": [
+       {
+        "Node Type": "Seq Scan",
+        "Parent Relationship": "Outer",
+        "Parallel Aware": false,
+        "Async Capable": false,
+        "Relation Name": "t_438",
+        "Alias": "a2",
+        "Startup Cost": 0.0,
+        "Total Cost": 22096.0,
+        "Plan Rows": 47,
+        "Plan Width": 7,
+        "Filter": "(c_720 = a1.c_720)"
+       }
+      ]
+     }
+    ]
+   },
+   "JIT": {
+    "Functions": 13,
+    "Options": {
+     "Inlining": true,
+     "Optimization": true,
+     "Expressions": true,
+     "Deforming": true
+    }
+   }
+  },
+  "bitmask": {
+   "filter": "100010000000000000000",
+   "join": "100000010000000000000",
+   "group": "000000000000000000000",
+   "columns": [
+    "t_491.c_720",
+    "t_491.c_2e4",
+    "t_491.c_b0b",
+    "t_491.c_13b",
+    "t_491.c_fdf",
+    "t_491.c_b76",
+    "t_438.c_5b1",
+    "t_438.c_720",
+    "t_438.c_13b",
+    "t_438.c_328",
+    "t_438.c_303",
+    "t_438.c_910",
+    "t_438.c_c37",
+    "t_438.c_e7e",
+    "t_dcb.c_328",
+    "t_dcb.c_2e4",
+    "t_dcb.c_de3",
+    "t_dcb.c_3f6",
+    "t_b78.c_13b",
+    "t_b78.c_2e4",
+    "t_b78.c_b5e"
+   ]
+  },
+  "bottleneck": {
+   "node_id": 2,
+   "operator": "Seq Scan",
+   "relation": "t_438",
+   "rows": 47,
+   "cost_share_pct": 100.0,
+   "reason": "Seq Scan on t_438 is the bottleneck: it handles about 47 rows and accounts for about 100.0% of the plan's estimated cost. It runs once per row of its outer input (about 62 times), but EXPLAIN shows its cost only once.",
+   "op": "Seq Scan",
+   "evidence": {
+    "relation": "t_438",
+    "plan_rows": 47,
+    "actual_rows": null,
+    "loops": 62,
+    "self_cost": 22096.0,
+    "cost_share_pct": 100.0,
+    "picked_by": "rules"
+   },
+   "path": "rules"
+  },
+  "recommendations": [
+   {
+    "kind": "index",
+    "action": "CREATE INDEX ON t_438 (c_720)",
+    "cost_before": 1369977.51,
+    "novelty": "unseen shape (lower confidence)",
+    "agent_score": 0.544,
+    "write_penalty": 0.03,
+    "verified_by": "hypopg_cost",
+    "reason": "Join / subquery lookup: simulated cost 1,369,978 -> 11,380 (99.2% lower).",
+    "cost_after": 11379.81,
+    "improvement_pct": 99.2,
+    "reward": 0.962,
+    "planner_gain_pct": 99.2,
+    "measured_gain_pct": null,
+    "timing_note": "estimated by the planner (not timed: time_fn has no actions parameter)",
+    "write_latency": {
+     "source": "estimated",
+     "note": "width-based write penalty, not measured"
+    },
+    "summary": "Add index on t_438 (c_720) (99% lower cost in the HypoPG sandbox, estimated by the planner (not timed), +1 index column to maintain on writes (estimated, write penalty 0.03)),  and rewrite the query (correlated subquery to join) (4.8x faster measured, same results). Numbers are per fix, measured separately. Zero raw data exposed to the AI (masked metadata only).",
+    "why_not": "Rewrite 'correlated_subquery_to_join' also works (same rows, 2,685 ms -> 561 ms, 4.8x faster) but the chosen fix gains more (79% vs 99% for the chosen fix). Note: rewrites are measured in real time, indexes by planner cost."
+   },
+   {
+    "kind": "rewrite",
+    "action": "SELECT a1.c_2e4, s1.v AS x1 FROM t_491 AS a1 LEFT JOIN (SELECT a2.c_720 AS k, SUM(a2.c_c37) AS v FROM t_438 AS a2 GROUP BY a2.c_720) AS s1 ON s1.k = a1.c_720 WHERE a1.c_fdf = $1 AND a1.c_720 <= $2",
+    "cost_before": 1369977.51,
+    "novelty": "unseen shape (lower confidence)",
+    "agent_score": 0.986,
+    "write_penalty": 0.0,
+    "rule_label": "correlated subquery to join",
+    "cost_after": 22263.08,
+    "verified_by": "timed_run",
+    "same_results": true,
+    "time_before_ms": 2685.1,
+    "time_after_ms": 561.3,
+    "speedup": 4.78,
+    "verify_note": "same results, 2,685 ms -> 561 ms (4.8x faster)",
+    "reason": "The subquery re-runs once for every outer row. Computing it once, grouped by the link column, and joining is one pass instead of thousands. Same results, 2,685 ms -> 561 ms (4.8x faster).",
+    "improvement_pct": 79.1,
+    "reward": 0.791
+   }
+  ],
+  "cost_before": 1369977.51,
+  "cost_after": 11379.81,
+  "improvement_pct": 99.2,
+  "time_before_ms": 3042.66,
+  "time_after_ms": 1.89,
+  "write_latency_ms": 0.00195,
+  "storage_bytes": 8077312,
+  "explanation": "Why it is slow: Seq Scan on t_438 is the bottleneck: it handles about 47 rows and accounts for about 100.0% of the plan's estimated cost. It runs once per row of its outer input (about 62 times), but EXPLAIN shows its cost only once. (evidence: actual_rows=None, cost_share_pct=100.0, loops=62, picked_by=rules, plan_rows=47, relation=t_438, self_cost=22096.0). Best fix: CREATE INDEX ON t_438 (c_720) - Join / subquery lookup: simulated cost 1,369,978 -> 11,380 (99.2% lower). The planner's estimated cost drops from 1,369,978 to 11,380, about 99% lower. 1 other option(s) were also considered.",
+  "explanation_unmasked": "Why it is slow: Seq Scan on orders is the bottleneck: it handles about 47 rows and accounts for about 100.0% of the plan's estimated cost. It runs once per row of its outer input (about 62 times), but EXPLAIN shows its cost only once. (evidence: actual_rows=None, cost_share_pct=100.0, loops=62, picked_by=rules, plan_rows=47, relation=orders, self_cost=22096.0). Best fix: CREATE INDEX ON orders (customer_id) - Join / subquery lookup: simulated cost 1,369,978 -> 11,380 (99.2% lower). The planner's estimated cost drops from 1,369,978 to 11,380, about 99% lower. 1 other option(s) were also considered.",
+  "deploy_sql": "CREATE INDEX ON orders (customer_id)",
+  "deploy_scripts": [
+   "CREATE INDEX ON orders (customer_id)",
+   "SELECT a1.name, s1.v AS x1 FROM customers AS a1 LEFT JOIN (SELECT a2.customer_id AS k, SUM(a2.amount) AS v FROM orders AS a2 GROUP BY a2.customer_id) AS s1 ON s1.k = a1.customer_id WHERE a1.segment = 'corporate' AND a1.customer_id <= 300"
+  ],
+  "leak_check": true,
+  "match": {
+   "query_id": "q04",
+   "name": "Lifetime spend of corporate customers",
+   "confidence": 0.93,
+   "method": "keywords",
+   "runner_up": "q10"
+  },
+  "llm": {
+   "source": "template",
+   "prompt_leak_ok": true,
+   "reply_leak_ok": null,
+   "latency_ms": 1.4,
+   "fallback_reason": "LLM unavailable: recording uses the template explanation"
+  },
+  "unsafe_rewrite": false,
+  "ai_inputs": {
+   "time_fn": "used",
+   "stats": "used",
+   "column_types": "used"
+  }
+ },
+ "q05": {
+  "query_id": "q05",
+  "masked_query": "SELECT COUNT(*), SUM(c_c37) FROM t_438 WHERE DATE_TRUNC('MONTH', c_303) = $1",
+  "masked_plan": {
+   "Plan": {
+    "Node Type": "Aggregate",
+    "Strategy": "Plain",
+    "Partial Mode": "Finalize",
+    "Parallel Aware": false,
+    "Async Capable": false,
+    "Startup Cost": 17898.31,
+    "Total Cost": 17898.32,
+    "Plan Rows": 1,
+    "Plan Width": 40,
+    "Plans": [
+     {
+      "Node Type": "Gather",
+      "Parent Relationship": "Outer",
+      "Parallel Aware": false,
+      "Async Capable": false,
+      "Startup Cost": 17898.08,
+      "Total Cost": 17898.29,
+      "Plan Rows": 2,
+      "Plan Width": 40,
+      "Workers Planned": 2,
+      "Single Copy": false,
+      "Plans": [
+       {
+        "Node Type": "Aggregate",
+        "Strategy": "Plain",
+        "Partial Mode": "Partial",
+        "Parent Relationship": "Outer",
+        "Parallel Aware": false,
+        "Async Capable": false,
+        "Startup Cost": 16898.08,
+        "Total Cost": 16898.09,
+        "Plan Rows": 1,
+        "Plan Width": 40,
+        "Plans": [
+         {
+          "Node Type": "Seq Scan",
+          "Parent Relationship": "Outer",
+          "Parallel Aware": true,
+          "Async Capable": false,
+          "Relation Name": "t_438",
+          "Alias": "t_438",
+          "Startup Cost": 0.0,
+          "Total Cost": 16887.67,
+          "Plan Rows": 2083,
+          "Plan Width": 7,
+          "Filter": "(date_trunc('month'::text, (c_303)::timestamp with time zone) = $1::timestamp with time zone)"
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "bitmask": {
+   "filter": "000000000010000000000",
+   "join": "000000000000000000000",
+   "group": "000000000000000000000",
+   "columns": [
+    "t_491.c_720",
+    "t_491.c_2e4",
+    "t_491.c_b0b",
+    "t_491.c_13b",
+    "t_491.c_fdf",
+    "t_491.c_b76",
+    "t_438.c_5b1",
+    "t_438.c_720",
+    "t_438.c_13b",
+    "t_438.c_328",
+    "t_438.c_303",
+    "t_438.c_910",
+    "t_438.c_c37",
+    "t_438.c_e7e",
+    "t_dcb.c_328",
+    "t_dcb.c_2e4",
+    "t_dcb.c_de3",
+    "t_dcb.c_3f6",
+    "t_b78.c_13b",
+    "t_b78.c_2e4",
+    "t_b78.c_b5e"
+   ]
+  },
+  "bottleneck": {
+   "node_id": 3,
+   "operator": "Seq Scan",
+   "relation": "t_438",
+   "rows": 2083,
+   "cost_share_pct": 94.4,
+   "reason": "Seq Scan on t_438 is the bottleneck: it handles about 2,083 rows and accounts for about 94.4% of the plan's estimated cost.",
+   "op": "Seq Scan",
+   "evidence": {
+    "relation": "t_438",
+    "plan_rows": 2083,
+    "actual_rows": null,
+    "loops": 1,
+    "self_cost": 16887.67,
+    "cost_share_pct": 94.4,
+    "picked_by": "rules"
+   },
+   "path": "rules"
+  },
+  "recommendations": [
+   {
+    "kind": "rewrite",
+    "action": "SELECT COUNT(*), SUM(c_c37) FROM t_438 WHERE (c_303 >= $1 AND c_303 < CAST($1 AS TIMESTAMP) + INTERVAL '1 MONTH')",
+    "cost_before": 17898.32,
+    "novelty": "seen query shape",
+    "agent_score": 0.986,
+    "write_penalty": 0.0,
+    "rule_label": "function to range",
+    "cost_after": 16904.44,
+    "verified_by": "timed_run",
+    "same_results": true,
+    "time_before_ms": 64.4,
+    "time_after_ms": 29.9,
+    "speedup": 2.16,
+    "verify_note": "same results, 64 ms -> 30 ms (2.2x faster)",
+    "reason": "Wrapping the column in a function hides it from any index. An equivalent plain range on the column lets an index be used. Same results, 64 ms -> 30 ms (2.2x faster).",
+    "improvement_pct": 53.7,
+    "reward": 0.537,
+    "summary": "Rewrite the query (function to range) (2.2x faster measured, same results). Zero raw data exposed to the AI (masked metadata only).",
+    "why_not": "Partitioning t_438 by c_303 not chosen: a smaller change does as well or better (simulated cost drop 0.0% vs 54% for the chosen fix)."
+   }
+  ],
+  "cost_before": 17898.32,
+  "cost_after": 16904.44,
+  "improvement_pct": 5.6,
+  "time_before_ms": null,
+  "time_after_ms": null,
+  "write_latency_ms": null,
+  "storage_bytes": null,
+  "explanation": "Why it is slow: Seq Scan on t_438 is the bottleneck: it handles about 2,083 rows and accounts for about 94.4% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=94.4, loops=1, picked_by=rules, plan_rows=2083, relation=t_438, self_cost=16887.67). Best fix: SELECT COUNT(*), SUM(c_c37) FROM t_438 WHERE (c_303 >= $1 AND c_303 < CAST($1 AS TIMESTAMP) + INTERVAL '1 MONTH') - Wrapping the column in a function hides it from any index. An equivalent plain range on the column lets an index be used. Same results, 64 ms -> 30 ms (2.2x faster). The planner's estimated cost drops from 17,898 to 16,904, about 6% lower.",
+  "explanation_unmasked": "Why it is slow: Seq Scan on orders is the bottleneck: it handles about 2,083 rows and accounts for about 94.4% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=94.4, loops=1, picked_by=rules, plan_rows=2083, relation=orders, self_cost=16887.67). Best fix: SELECT COUNT(*), SUM(amount) FROM orders WHERE (order_date >= '2026-08-01' AND order_date < CAST('2026-08-01' AS TIMESTAMP) + INTERVAL '1 MONTH') - Wrapping the column in a function hides it from any index. An equivalent plain range on the column lets an index be used. Same results, 64 ms -> 30 ms (2.2x faster). The planner's estimated cost drops from 17,898 to 16,904, about 6% lower.",
+  "deploy_sql": "SELECT COUNT(*), SUM(amount) FROM orders WHERE (order_date >= '2026-08-01' AND order_date < CAST('2026-08-01' AS TIMESTAMP) + INTERVAL '1 MONTH')",
+  "deploy_scripts": [
+   "SELECT COUNT(*), SUM(amount) FROM orders WHERE (order_date >= '2026-08-01' AND order_date < CAST('2026-08-01' AS TIMESTAMP) + INTERVAL '1 MONTH')"
+  ],
+  "leak_check": true,
+  "match": {
+   "query_id": "q05",
+   "name": "August orders (date wrapped in a function)",
+   "confidence": 0.95,
+   "method": "keywords",
+   "runner_up": "q09"
+  },
+  "llm": {
+   "source": "template",
+   "prompt_leak_ok": true,
+   "reply_leak_ok": null,
+   "latency_ms": 1.2,
+   "fallback_reason": "LLM unavailable: recording uses the template explanation"
+  },
+  "unsafe_rewrite": false,
+  "ai_inputs": {
+   "time_fn": "used",
+   "stats": "used",
+   "column_types": "used"
+  }
+ },
+ "q06": {
+  "query_id": "q06",
+  "masked_query": "SELECT a2.c_2e4, SUM(a1.c_c37) AS x1 FROM t_438 AS a1 JOIN t_dcb AS a2 ON a2.c_328 = a1.c_328 WHERE a2.c_de3 = $2 AND a1.c_303 >= $3 GROUP BY a2.c_2e4 ORDER BY x1 DESC LIMIT $1",
+  "masked_plan": {
+   "Plan": {
+    "Node Type": "Limit",
+    "Parallel Aware": false,
+    "Async Capable": false,
+    "Startup Cost": 16050.92,
+    "Total Cost": 16050.95,
+    "Plan Rows": 10,
+    "Plan Width": 49,
+    "Plans": [
+     {
+      "Node Type": "Sort",
+      "Parent Relationship": "Outer",
+      "Parallel Aware": false,
+      "Async Capable": false,
+      "Startup Cost": 16050.92,
+      "Total Cost": 16051.57,
+      "Plan Rows": 258,
+      "Plan Width": 49,
+      "Sort Key": [
+       "(sum(a1.c_c37)) DESC"
+      ],
+      "Plans": [
+       {
+        "Node Type": "Aggregate",
+        "Strategy": "Sorted",
+        "Partial Mode": "Finalize",
+        "Parent Relationship": "Outer",
+        "Parallel Aware": false,
+        "Async Capable": false,
+        "Startup Cost": 15978.05,
+        "Total Cost": 16045.35,
+        "Plan Rows": 258,
+        "Plan Width": 49,
+        "Group Key": [
+         "a2.c_2e4"
+        ],
+        "Plans": [
+         {
+          "Node Type": "Gather Merge",
+          "Parent Relationship": "Outer",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Startup Cost": 15978.05,
+          "Total Cost": 16038.25,
+          "Plan Rows": 516,
+          "Plan Width": 49,
+          "Workers Planned": 2,
+          "Plans": [
+           {
+            "Node Type": "Sort",
+            "Parent Relationship": "Outer",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Startup Cost": 14978.02,
+            "Total Cost": 14978.67,
+            "Plan Rows": 258,
+            "Plan Width": 49,
+            "Sort Key": [
+             "a2.c_2e4"
+            ],
+            "Plans": [
+             {
+              "Node Type": "Aggregate",
+              "Strategy": "Hashed",
+              "Partial Mode": "Partial",
+              "Parent Relationship": "Outer",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Startup Cost": 14964.46,
+              "Total Cost": 14967.69,
+              "Plan Rows": 258,
+              "Plan Width": 49,
+              "Group Key": [
+               "a2.c_2e4"
+              ],
+              "Planned Partitions": 0,
+              "Plans": [
+               {
+                "Node Type": "Hash Join",
+                "Parent Relationship": "Outer",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Join Type": "Inner",
+                "Startup Cost": 45.23,
+                "Total Cost": 14941.84,
+                "Plan Rows": 4525,
+                "Plan Width": 24,
+                "Inner Unique": true,
+                "Hash Cond": "(a1.c_328 = a2.c_328)",
+                "Plans": [
+                 {
+                  "Node Type": "Seq Scan",
+                  "Parent Relationship": "Outer",
+                  "Parallel Aware": true,
+                  "Async Capable": false,
+                  "Relation Name": "t_438",
+                  "Alias": "a1",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 14804.33,
+                  "Plan Rows": 35078,
+                  "Plan Width": 11,
+                  "Filter": "(c_303 >= $3::date)"
+                 },
+                 {
+                  "Node Type": "Hash",
+                  "Parent Relationship": "Inner",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Startup Cost": 42.0,
+                  "Total Cost": 42.0,
+                  "Plan Rows": 258,
+                  "Plan Width": 21,
+                  "Plans": [
+                   {
+                    "Node Type": "Seq Scan",
+                    "Parent Relationship": "Outer",
+                    "Parallel Aware": false,
+                    "Async Capable": false,
+                    "Relation Name": "t_dcb",
+                    "Alias": "a2",
+                    "Startup Cost": 0.0,
+                    "Total Cost": 42.0,
+                    "Plan Rows": 258,
+                    "Plan Width": 21,
+                    "Filter": "(c_de3 = $2::text)"
+                   }
+                  ]
+                 }
+                ]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "bitmask": {
+   "filter": "000000000010000010000",
+   "join": "000000000100001000000",
+   "group": "000000000000000100000",
+   "columns": [
+    "t_491.c_720",
+    "t_491.c_2e4",
+    "t_491.c_b0b",
+    "t_491.c_13b",
+    "t_491.c_fdf",
+    "t_491.c_b76",
+    "t_438.c_5b1",
+    "t_438.c_720",
+    "t_438.c_13b",
+    "t_438.c_328",
+    "t_438.c_303",
+    "t_438.c_910",
+    "t_438.c_c37",
+    "t_438.c_e7e",
+    "t_dcb.c_328",
+    "t_dcb.c_2e4",
+    "t_dcb.c_de3",
+    "t_dcb.c_3f6",
+    "t_b78.c_13b",
+    "t_b78.c_2e4",
+    "t_b78.c_b5e"
+   ]
+  },
+  "bottleneck": {
+   "node_id": 7,
+   "operator": "Seq Scan",
+   "relation": "t_438",
+   "rows": 35078,
+   "cost_share_pct": 92.2,
+   "reason": "Seq Scan on t_438 is the bottleneck: it handles about 35,078 rows and accounts for about 92.2% of the plan's estimated cost.",
+   "op": "Seq Scan",
+   "evidence": {
+    "relation": "t_438",
+    "plan_rows": 35078,
+    "actual_rows": null,
+    "loops": 1,
+    "self_cost": 14804.33,
+    "cost_share_pct": 92.2,
+    "picked_by": "rules"
+   },
+   "path": "rules"
+  },
+  "recommendations": [
+   {
+    "kind": "partition",
+    "action": "PARTITION t_438 BY RANGE (c_303) MONTHLY",
+    "cost_before": 16050.95,
+    "novelty": "seen query shape",
+    "agent_score": 0.79,
+    "write_penalty": 0.03,
+    "verified_by": "hypopg_cost",
+    "reason": "Range filter on this column; partitions let the scan skip whole months: simulated cost 16,051 -> 2,600 (83.8% lower).",
+    "cost_after": 2600.45,
+    "improvement_pct": 83.8,
+    "reward": 0.808,
+    "planner_gain_pct": 83.8,
+    "measured_gain_pct": null,
+    "timing_note": "estimated by the planner (not timed: time_fn has no actions parameter)",
+    "summary": "Partition t_438 by c_303 (84% lower cost on a partitioned sandbox copy, estimated by the planner (not timed); write cost not measured). Zero raw data exposed to the AI (masked metadata only).",
+    "why_not": "Index on t_438(c_303) not chosen: it cuts the simulated cost by only 22% vs 84% for the chosen fix."
+   },
+   {
+    "kind": "index",
+    "action": "CREATE INDEX ON t_438 (c_303)",
+    "cost_before": 16050.95,
+    "novelty": "seen query shape",
+    "agent_score": 0.247,
+    "write_penalty": 0.03,
+    "verified_by": "hypopg_cost",
+    "reason": "Range filter: simulated cost 16,051 -> 12,587 (21.6% lower).",
+    "cost_after": 12586.67,
+    "improvement_pct": 21.6,
+    "reward": 0.186,
+    "planner_gain_pct": 21.6,
+    "measured_gain_pct": null,
+    "timing_note": "estimated by the planner (not timed: time_fn has no actions parameter)",
+    "write_latency": {
+     "source": "estimated",
+     "note": "width-based write penalty, not measured"
+    }
+   }
+  ],
+  "cost_before": 16050.95,
+  "cost_after": 2600.45,
+  "improvement_pct": 83.8,
+  "time_before_ms": null,
+  "time_after_ms": null,
+  "write_latency_ms": null,
+  "storage_bytes": null,
+  "explanation": "Why it is slow: Seq Scan on t_438 is the bottleneck: it handles about 35,078 rows and accounts for about 92.2% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=92.2, loops=1, picked_by=rules, plan_rows=35078, relation=t_438, self_cost=14804.33). Best fix: PARTITION t_438 BY RANGE (c_303) MONTHLY - Range filter on this column; partitions let the scan skip whole months: simulated cost 16,051 -> 2,600 (83.8% lower). The planner's estimated cost drops from 16,051 to 2,600, about 84% lower. 1 other option(s) were also considered.",
+  "explanation_unmasked": "Why it is slow: Seq Scan on orders is the bottleneck: it handles about 35,078 rows and accounts for about 92.2% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=92.2, loops=1, picked_by=rules, plan_rows=35078, relation=orders, self_cost=14804.33). Best fix: PARTITION orders BY RANGE (order_date) MONTHLY - Range filter on this column; partitions let the scan skip whole months: simulated cost 16,051 -> 2,600 (83.8% lower). The planner's estimated cost drops from 16,051 to 2,600, about 84% lower. 1 other option(s) were also considered.",
+  "deploy_sql": "PARTITION orders BY RANGE (order_date) MONTHLY",
+  "deploy_scripts": [
+   "PARTITION orders BY RANGE (order_date) MONTHLY",
+   "CREATE INDEX ON orders (order_date)"
+  ],
+  "leak_check": true,
+  "match": {
+   "query_id": "q06",
+   "name": "Top 10 electronics last quarter",
+   "confidence": 1.0,
+   "method": "keywords",
+   "runner_up": null
+  },
+  "llm": {
+   "source": "template",
+   "prompt_leak_ok": true,
+   "reply_leak_ok": null,
+   "latency_ms": 1.2,
+   "fallback_reason": "LLM unavailable: recording uses the template explanation"
+  },
+  "unsafe_rewrite": false,
+  "ai_inputs": {
+   "time_fn": "used",
+   "stats": "used",
+   "column_types": "used"
+  }
+ },
+ "q07": {
+  "query_id": "q07",
+  "masked_query": "SELECT c_720, c_2e4, c_b0b FROM t_491 WHERE NOT c_720 IN (SELECT c_720 FROM t_438)",
+  "masked_plan": {
+   "Plan": {
+    "Node Type": "Seq Scan",
+    "Parallel Aware": false,
+    "Async Capable": false,
+    "Relation Name": "t_491",
+    "Alias": "t_491",
+    "Startup Cost": 22096.0,
+    "Total Cost": 23329.0,
+    "Plan Rows": 25000,
+    "Plan Width": 43,
+    "Filter": "(NOT (hashed SubPlan 1))",
+    "Plans": [
+     {
+      "Node Type": "Seq Scan",
+      "Parent Relationship": "SubPlan",
+      "Subplan Name": "SubPlan 1",
+      "Parallel Aware": false,
+      "Async Capable": false,
+      "Relation Name": "t_438",
+      "Alias": "t_438",
+      "Startup Cost": 0.0,
+      "Total Cost": 19596.0,
+      "Plan Rows": 1000000,
+      "Plan Width": 4
+     }
+    ]
+   }
+  },
+  "bitmask": {
+   "filter": "000000000000000000000",
+   "join": "100000010000000000000",
+   "group": "000000000000000000000",
+   "columns": [
+    "t_491.c_720",
+    "t_491.c_2e4",
+    "t_491.c_b0b",
+    "t_491.c_13b",
+    "t_491.c_fdf",
+    "t_491.c_b76",
+    "t_438.c_5b1",
+    "t_438.c_720",
+    "t_438.c_13b",
+    "t_438.c_328",
+    "t_438.c_303",
+    "t_438.c_910",
+    "t_438.c_c37",
+    "t_438.c_e7e",
+    "t_dcb.c_328",
+    "t_dcb.c_2e4",
+    "t_dcb.c_de3",
+    "t_dcb.c_3f6",
+    "t_b78.c_13b",
+    "t_b78.c_2e4",
+    "t_b78.c_b5e"
+   ]
+  },
+  "bottleneck": {
+   "node_id": 1,
+   "operator": "Seq Scan",
+   "relation": "t_438",
+   "rows": 1000000,
+   "cost_share_pct": 100.0,
+   "reason": "Seq Scan on t_438 is the bottleneck: it handles about 1,000,000 rows and accounts for about 100.0% of the plan's estimated cost. It runs once per row of its outer input (about 25,000 times), but EXPLAIN shows its cost only once.",
+   "op": "Seq Scan",
+   "evidence": {
+    "relation": "t_438",
+    "plan_rows": 1000000,
+    "actual_rows": null,
+    "loops": 25000,
+    "self_cost": 19596.0,
+    "cost_share_pct": 100.0,
+    "picked_by": "rules"
+   },
+   "path": "rules"
+  },
+  "recommendations": [
+   {
+    "kind": "rewrite",
+    "action": "SELECT c_720, c_2e4, c_b0b FROM t_491 WHERE NOT EXISTS(SELECT 1 FROM t_438 AS n1 WHERE n1.c_720 = t_491.c_720)",
+    "cost_before": 23329.0,
+    "novelty": "unseen shape (lower confidence)",
+    "agent_score": 0.986,
+    "write_penalty": 0.0,
+    "rule_label": "not in to not exists",
+    "cost_after": 28709.05,
+    "verified_by": "timed_run",
+    "same_results": true,
+    "time_before_ms": 436.7,
+    "time_after_ms": 56.3,
+    "speedup": 7.76,
+    "verify_note": "same results, 437 ms -> 56 ms (7.8x faster)",
+    "reason": "NOT IN first builds the full list of subquery values. NOT EXISTS stops at the first match per row and can use an index. Same result as long as the subquery column has no NULLs. Same results, 437 ms -> 56 ms (7.8x faster).",
+    "improvement_pct": 87.1,
+    "reward": 0.871,
+    "summary": "Rewrite the query (not in to not exists) (7.8x faster measured, same results). Zero raw data exposed to the AI (masked metadata only)."
+   }
+  ],
+  "cost_before": 23329.0,
+  "cost_after": 28709.05,
+  "improvement_pct": -23.1,
+  "time_before_ms": null,
+  "time_after_ms": null,
+  "write_latency_ms": null,
+  "storage_bytes": null,
+  "explanation": "Why it is slow: Seq Scan on t_438 is the bottleneck: it handles about 1,000,000 rows and accounts for about 100.0% of the plan's estimated cost. It runs once per row of its outer input (about 25,000 times), but EXPLAIN shows its cost only once. (evidence: actual_rows=None, cost_share_pct=100.0, loops=25000, picked_by=rules, plan_rows=1000000, relation=t_438, self_cost=19596.0). Best fix: SELECT c_720, c_2e4, c_b0b FROM t_491 WHERE NOT EXISTS(SELECT 1 FROM t_438 AS n1 WHERE n1.c_720 = t_491.c_720) - NOT IN first builds the full list of subquery values. NOT EXISTS stops at the first match per row and can use an index. Same result as long as the subquery column has no NULLs. Same results, 437 ms -> 56 ms (7.8x faster). The planner's estimated cost drops from 23,329 to 28,709, about -23% lower.",
+  "explanation_unmasked": "Why it is slow: Seq Scan on orders is the bottleneck: it handles about 1,000,000 rows and accounts for about 100.0% of the plan's estimated cost. It runs once per row of its outer input (about 25,000 times), but EXPLAIN shows its cost only once. (evidence: actual_rows=None, cost_share_pct=100.0, loops=25000, picked_by=rules, plan_rows=1000000, relation=orders, self_cost=19596.0). Best fix: SELECT customer_id, name, email FROM customers WHERE NOT EXISTS(SELECT 1 FROM orders AS n1 WHERE n1.customer_id = customers.customer_id) - NOT IN first builds the full list of subquery values. NOT EXISTS stops at the first match per row and can use an index. Same result as long as the subquery column has no NULLs. Same results, 437 ms -> 56 ms (7.8x faster). The planner's estimated cost drops from 23,329 to 28,709, about -23% lower.",
+  "deploy_sql": "SELECT customer_id, name, email FROM customers WHERE NOT EXISTS(SELECT 1 FROM orders AS n1 WHERE n1.customer_id = customers.customer_id)",
+  "deploy_scripts": [
+   "SELECT customer_id, name, email FROM customers WHERE NOT EXISTS(SELECT 1 FROM orders AS n1 WHERE n1.customer_id = customers.customer_id)"
+  ],
+  "leak_check": true,
+  "match": {
+   "query_id": "q07",
+   "name": "Customers who never ordered",
+   "confidence": 0.81,
+   "method": "keywords",
+   "runner_up": "q10"
+  },
+  "llm": {
+   "source": "template",
+   "prompt_leak_ok": true,
+   "reply_leak_ok": null,
+   "latency_ms": 0.5,
+   "fallback_reason": "LLM unavailable: recording uses the template explanation"
+  },
+  "unsafe_rewrite": false,
+  "ai_inputs": {
+   "time_fn": "used",
+   "stats": "used",
+   "column_types": "used"
+  }
+ },
+ "q08": {
+  "query_id": "q08",
+  "masked_query": "SELECT DATE_TRUNC('MONTH', c_303) AS x1, SUM(c_c37) FROM t_438 WHERE c_303 >= $1 AND c_303 < $2 GROUP BY 1 ORDER BY 1",
+  "masked_plan": {
+   "Plan": {
+    "Node Type": "Aggregate",
+    "Strategy": "Sorted",
+    "Partial Mode": "Finalize",
+    "Parallel Aware": false,
+    "Async Capable": false,
+    "Startup Cost": 18290.44,
+    "Total Cost": 18581.54,
+    "Plan Rows": 1095,
+    "Plan Width": 40,
+    "Group Key": [
+     "(date_trunc('month'::text, (c_303)::timestamp with time zone))"
+    ],
+    "Plans": [
+     {
+      "Node Type": "Gather Merge",
+      "Parent Relationship": "Outer",
+      "Parallel Aware": false,
+      "Async Capable": false,
+      "Startup Cost": 18290.44,
+      "Total Cost": 18545.95,
+      "Plan Rows": 2190,
+      "Plan Width": 40,
+      "Workers Planned": 2,
+      "Plans": [
+       {
+        "Node Type": "Sort",
+        "Parent Relationship": "Outer",
+        "Parallel Aware": false,
+        "Async Capable": false,
+        "Startup Cost": 17290.41,
+        "Total Cost": 17293.15,
+        "Plan Rows": 1095,
+        "Plan Width": 40,
+        "Sort Key": [
+         "(date_trunc('month'::text, (c_303)::timestamp with time zone))"
+        ],
+        "Plans": [
+         {
+          "Node Type": "Aggregate",
+          "Strategy": "Hashed",
+          "Partial Mode": "Partial",
+          "Parent Relationship": "Outer",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Startup Cost": 17215.97,
+          "Total Cost": 17235.13,
+          "Plan Rows": 1095,
+          "Plan Width": 40,
+          "Group Key": [
+           "date_trunc('month'::text, (c_303)::timestamp with time zone)"
+          ],
+          "Planned Partitions": 0,
+          "Plans": [
+           {
+            "Node Type": "Seq Scan",
+            "Parent Relationship": "Outer",
+            "Parallel Aware": true,
+            "Async Capable": false,
+            "Relation Name": "t_438",
+            "Alias": "t_438",
+            "Startup Cost": 0.0,
+            "Total Cost": 16530.99,
+            "Plan Rows": 136997,
+            "Plan Width": 15,
+            "Filter": "((c_303 >= $1::date) AND (c_303 < $2::date))"
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "bitmask": {
+   "filter": "000000000010000000000",
+   "join": "000000000000000000000",
+   "group": "000000000010000000000",
+   "columns": [
+    "t_491.c_720",
+    "t_491.c_2e4",
+    "t_491.c_b0b",
+    "t_491.c_13b",
+    "t_491.c_fdf",
+    "t_491.c_b76",
+    "t_438.c_5b1",
+    "t_438.c_720",
+    "t_438.c_13b",
+    "t_438.c_328",
+    "t_438.c_303",
+    "t_438.c_910",
+    "t_438.c_c37",
+    "t_438.c_e7e",
+    "t_dcb.c_328",
+    "t_dcb.c_2e4",
+    "t_dcb.c_de3",
+    "t_dcb.c_3f6",
+    "t_b78.c_13b",
+    "t_b78.c_2e4",
+    "t_b78.c_b5e"
+   ]
+  },
+  "bottleneck": {
+   "node_id": 4,
+   "operator": "Seq Scan",
+   "relation": "t_438",
+   "rows": 136997,
+   "cost_share_pct": 89.0,
+   "reason": "Seq Scan on t_438 is the bottleneck: it handles about 136,997 rows and accounts for about 89.0% of the plan's estimated cost.",
+   "op": "Seq Scan",
+   "evidence": {
+    "relation": "t_438",
+    "plan_rows": 136997,
+    "actual_rows": null,
+    "loops": 1,
+    "self_cost": 16530.99,
+    "cost_share_pct": 89.0,
+    "picked_by": "rules"
+   },
+   "path": "rules"
+  },
+  "recommendations": [
+   {
+    "kind": "partition",
+    "action": "PARTITION t_438 BY RANGE (c_303) MONTHLY",
+    "cost_before": 18581.54,
+    "novelty": "seen query shape",
+    "agent_score": 0.627,
+    "write_penalty": 0.03,
+    "verified_by": "hypopg_cost",
+    "reason": "Range filter on this column; partitions let the scan skip whole months: simulated cost 18,582 -> 9,780 (47.4% lower).",
+    "cost_after": 9780.07,
+    "improvement_pct": 47.4,
+    "reward": 0.444,
+    "planner_gain_pct": 47.4,
+    "measured_gain_pct": null,
+    "timing_note": "estimated by the planner (not timed: time_fn has no actions parameter)",
+    "summary": "Partition t_438 by c_303 (47% lower cost on a partitioned sandbox copy, estimated by the planner (not timed); write cost not measured). Zero raw data exposed to the AI (masked metadata only).",
+    "why_not": "Index on t_438(c_303) rejected: the planner would not use it - the simulated cost does not go down at all."
+   }
+  ],
+  "cost_before": 18581.54,
+  "cost_after": 9780.07,
+  "improvement_pct": 47.4,
+  "time_before_ms": null,
+  "time_after_ms": null,
+  "write_latency_ms": null,
+  "storage_bytes": null,
+  "explanation": "Why it is slow: Seq Scan on t_438 is the bottleneck: it handles about 136,997 rows and accounts for about 89.0% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=89.0, loops=1, picked_by=rules, plan_rows=136997, relation=t_438, self_cost=16530.99). Best fix: PARTITION t_438 BY RANGE (c_303) MONTHLY - Range filter on this column; partitions let the scan skip whole months: simulated cost 18,582 -> 9,780 (47.4% lower). The planner's estimated cost drops from 18,582 to 9,780, about 47% lower.",
+  "explanation_unmasked": "Why it is slow: Seq Scan on orders is the bottleneck: it handles about 136,997 rows and accounts for about 89.0% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=89.0, loops=1, picked_by=rules, plan_rows=136997, relation=orders, self_cost=16530.99). Best fix: PARTITION orders BY RANGE (order_date) MONTHLY - Range filter on this column; partitions let the scan skip whole months: simulated cost 18,582 -> 9,780 (47.4% lower). The planner's estimated cost drops from 18,582 to 9,780, about 47% lower.",
+  "deploy_sql": "PARTITION orders BY RANGE (order_date) MONTHLY",
+  "deploy_scripts": [
+   "PARTITION orders BY RANGE (order_date) MONTHLY"
+  ],
+  "leak_check": true,
+  "match": {
+   "query_id": "q08",
+   "name": "Monthly revenue for 2025",
+   "confidence": 0.71,
+   "method": "keywords",
+   "runner_up": "q02"
+  },
+  "llm": {
+   "source": "template",
+   "prompt_leak_ok": true,
+   "reply_leak_ok": null,
+   "latency_ms": 1.2,
+   "fallback_reason": "LLM unavailable: recording uses the template explanation"
+  },
+  "unsafe_rewrite": false,
+  "ai_inputs": {
+   "time_fn": "used",
+   "stats": "used",
+   "column_types": "used"
+  }
+ },
+ "q09": {
+  "query_id": "q09",
+  "masked_query": "SELECT c_5b1, c_720, c_328 FROM t_438 WHERE c_720 = $1 OR c_328 = $2",
+  "masked_plan": {
+   "Plan": {
+    "Node Type": "Gather",
+    "Parallel Aware": false,
+    "Async Capable": false,
+    "Startup Cost": 1000.0,
+    "Total Cost": 16878.9,
+    "Plan Rows": 329,
+    "Plan Width": 16,
+    "Workers Planned": 2,
+    "Single Copy": false,
+    "Plans": [
+     {
+      "Node Type": "Seq Scan",
+      "Parent Relationship": "Outer",
+      "Parallel Aware": true,
+      "Async Capable": false,
+      "Relation Name": "t_438",
+      "Alias": "t_438",
+      "Startup Cost": 0.0,
+      "Total Cost": 15846.0,
+      "Plan Rows": 137,
+      "Plan Width": 16,
+      "Filter": "((c_720 = $1) OR (c_328 = $2))"
+     }
+    ]
+   }
+  },
+  "bitmask": {
+   "filter": "000000010100000000000",
+   "join": "000000000000000000000",
+   "group": "000000000000000000000",
+   "columns": [
+    "t_491.c_720",
+    "t_491.c_2e4",
+    "t_491.c_b0b",
+    "t_491.c_13b",
+    "t_491.c_fdf",
+    "t_491.c_b76",
+    "t_438.c_5b1",
+    "t_438.c_720",
+    "t_438.c_13b",
+    "t_438.c_328",
+    "t_438.c_303",
+    "t_438.c_910",
+    "t_438.c_c37",
+    "t_438.c_e7e",
+    "t_dcb.c_328",
+    "t_dcb.c_2e4",
+    "t_dcb.c_de3",
+    "t_dcb.c_3f6",
+    "t_b78.c_13b",
+    "t_b78.c_2e4",
+    "t_b78.c_b5e"
+   ]
+  },
+  "bottleneck": {
+   "node_id": 1,
+   "operator": "Seq Scan",
+   "relation": "t_438",
+   "rows": 137,
+   "cost_share_pct": 93.9,
+   "reason": "Seq Scan on t_438 is the bottleneck: it handles about 137 rows and accounts for about 93.9% of the plan's estimated cost.",
+   "op": "Seq Scan",
+   "evidence": {
+    "relation": "t_438",
+    "plan_rows": 137,
+    "actual_rows": null,
+    "loops": 1,
+    "self_cost": 15846.0,
+    "cost_share_pct": 93.9,
+    "picked_by": "rules"
+   },
+   "path": "rules"
+  },
+  "recommendations": [
+   {
+    "kind": "index",
+    "action": "CREATE INDEX ON t_438 (c_328); CREATE INDEX ON t_438 (c_720)",
+    "cost_before": 16878.9,
+    "novelty": "seen query shape",
+    "agent_score": 0.853,
+    "write_penalty": 0.06,
+    "verified_by": "hypopg_cost",
+    "reason": "One index per OR branch: simulated cost 16,879 -> 1,133 (93.3% lower).",
+    "cost_after": 1133.06,
+    "improvement_pct": 93.3,
+    "reward": 0.873,
+    "planner_gain_pct": 93.3,
+    "measured_gain_pct": null,
+    "timing_note": "estimated by the planner (not timed: time_fn has no actions parameter)",
+    "write_latency": {
+     "source": "estimated",
+     "note": "width-based write penalty, not measured"
+    },
+    "summary": "Add indexes on t_438 (c_328) and t_438 (c_720) (93% lower cost in the HypoPG sandbox, estimated by the planner (not timed), +2 index columns to maintain on writes (estimated, write penalty 0.06)). Zero raw data exposed to the AI (masked metadata only).",
+    "why_not": "Index on t_438(c_328) rejected: the planner would not use it - the simulated cost does not go down at all."
+   }
+  ],
+  "cost_before": 16878.9,
+  "cost_after": 1133.06,
+  "improvement_pct": 93.3,
+  "time_before_ms": null,
+  "time_after_ms": null,
+  "write_latency_ms": null,
+  "storage_bytes": null,
+  "explanation": "Why it is slow: Seq Scan on t_438 is the bottleneck: it handles about 137 rows and accounts for about 93.9% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=93.9, loops=1, picked_by=rules, plan_rows=137, relation=t_438, self_cost=15846.0). Best fix: CREATE INDEX ON t_438 (c_328); CREATE INDEX ON t_438 (c_720) - One index per OR branch: simulated cost 16,879 -> 1,133 (93.3% lower). The planner's estimated cost drops from 16,879 to 1,133, about 93% lower.",
+  "explanation_unmasked": "Why it is slow: Seq Scan on orders is the bottleneck: it handles about 137 rows and accounts for about 93.9% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=93.9, loops=1, picked_by=rules, plan_rows=137, relation=orders, self_cost=15846.0). Best fix: CREATE INDEX ON orders (product_id); CREATE INDEX ON orders (customer_id) - One index per OR branch: simulated cost 16,879 -> 1,133 (93.3% lower). The planner's estimated cost drops from 16,879 to 1,133, about 93% lower.",
+  "deploy_sql": "CREATE INDEX ON orders (product_id); CREATE INDEX ON orders (customer_id)",
+  "deploy_scripts": [
+   "CREATE INDEX ON orders (product_id); CREATE INDEX ON orders (customer_id)"
+  ],
+  "leak_check": true,
+  "match": {
+   "query_id": "q09",
+   "name": "Orders by a customer OR for a product",
+   "confidence": 0.79,
+   "method": "keywords",
+   "runner_up": "q10"
+  },
+  "llm": {
+   "source": "template",
+   "prompt_leak_ok": true,
+   "reply_leak_ok": null,
+   "latency_ms": 0.5,
+   "fallback_reason": "LLM unavailable: recording uses the template explanation"
+  },
+  "unsafe_rewrite": false,
+  "ai_inputs": {
+   "time_fn": "used",
+   "stats": "used",
+   "column_types": "used"
+  }
+ },
+ "q10": {
+  "query_id": "q10",
+  "masked_query": "SELECT COUNT(DISTINCT c_720) FROM t_438 WHERE c_328 = $1 AND c_e7e = $2",
+  "masked_plan": {
+   "Plan": {
+    "Node Type": "Aggregate",
+    "Strategy": "Plain",
+    "Partial Mode": "Simple",
+    "Parallel Aware": false,
+    "Async Capable": false,
+    "Startup Cost": 16873.13,
+    "Total Cost": 16873.14,
+    "Plan Rows": 1,
+    "Plan Width": 8,
+    "Plans": [
+     {
+      "Node Type": "Gather Merge",
+      "Parent Relationship": "Outer",
+      "Parallel Aware": false,
+      "Async Capable": false,
+      "Startup Cost": 16848.75,
+      "Total Cost": 16872.62,
+      "Plan Rows": 205,
+      "Plan Width": 4,
+      "Workers Planned": 2,
+      "Plans": [
+       {
+        "Node Type": "Sort",
+        "Parent Relationship": "Outer",
+        "Parallel Aware": false,
+        "Async Capable": false,
+        "Startup Cost": 15848.72,
+        "Total Cost": 15848.94,
+        "Plan Rows": 85,
+        "Plan Width": 4,
+        "Sort Key": [
+         "c_720"
+        ],
+        "Plans": [
+         {
+          "Node Type": "Seq Scan",
+          "Parent Relationship": "Outer",
+          "Parallel Aware": true,
+          "Async Capable": false,
+          "Relation Name": "t_438",
+          "Alias": "t_438",
+          "Startup Cost": 0.0,
+          "Total Cost": 15846.0,
+          "Plan Rows": 85,
+          "Plan Width": 4,
+          "Filter": "((c_328 = $1) AND (c_e7e = $2::text))"
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "bitmask": {
+   "filter": "000000000100010000000",
+   "join": "000000000000000000000",
+   "group": "000000000000000000000",
+   "columns": [
+    "t_491.c_720",
+    "t_491.c_2e4",
+    "t_491.c_b0b",
+    "t_491.c_13b",
+    "t_491.c_fdf",
+    "t_491.c_b76",
+    "t_438.c_5b1",
+    "t_438.c_720",
+    "t_438.c_13b",
+    "t_438.c_328",
+    "t_438.c_303",
+    "t_438.c_910",
+    "t_438.c_c37",
+    "t_438.c_e7e",
+    "t_dcb.c_328",
+    "t_dcb.c_2e4",
+    "t_dcb.c_de3",
+    "t_dcb.c_3f6",
+    "t_b78.c_13b",
+    "t_b78.c_2e4",
+    "t_b78.c_b5e"
+   ]
+  },
+  "bottleneck": {
+   "node_id": 3,
+   "operator": "Seq Scan",
+   "relation": "t_438",
+   "rows": 85,
+   "cost_share_pct": 93.9,
+   "reason": "Seq Scan on t_438 is the bottleneck: it handles about 85 rows and accounts for about 93.9% of the plan's estimated cost.",
+   "op": "Seq Scan",
+   "evidence": {
+    "relation": "t_438",
+    "plan_rows": 85,
+    "actual_rows": null,
+    "loops": 1,
+    "self_cost": 15846.0,
+    "cost_share_pct": 93.9,
+    "picked_by": "rules"
+   },
+   "path": "rules"
+  },
+  "recommendations": [
+   {
+    "kind": "index",
+    "action": "CREATE INDEX ON t_438 (c_328)",
+    "cost_before": 16873.14,
+    "novelty": "unseen shape (lower confidence)",
+    "agent_score": 0.657,
+    "write_penalty": 0.03,
+    "verified_by": "hypopg_cost",
+    "reason": "Exact-match filter: simulated cost 16,873 -> 1,022 (93.9% lower).",
+    "cost_after": 1021.9,
+    "improvement_pct": 93.9,
+    "reward": 0.909,
+    "planner_gain_pct": 93.9,
+    "measured_gain_pct": null,
+    "timing_note": "estimated by the planner (not timed: time_fn has no actions parameter)",
+    "write_latency": {
+     "source": "estimated",
+     "note": "width-based write penalty, not measured"
+    },
+    "summary": "Add index on t_438 (c_328) (94% lower cost in the HypoPG sandbox, estimated by the planner (not timed), +1 index column to maintain on writes (estimated, write penalty 0.03)). Zero raw data exposed to the AI (masked metadata only).",
+    "why_not": "Index on t_438(c_328, c_e7e) not chosen: it would cut cost by 96% but adds a 2-column index that every insert and update must maintain vs 94% for the chosen fix."
+   },
+   {
+    "kind": "index",
+    "action": "CREATE INDEX ON t_438 (c_328, c_e7e)",
+    "cost_before": 16873.14,
+    "novelty": "unseen shape (lower confidence)",
+    "agent_score": 0.803,
+    "write_penalty": 0.06,
+    "verified_by": "hypopg_cost",
+    "reason": "Several exact-match filters: simulated cost 16,873 -> 742 (95.6% lower).",
+    "cost_after": 741.56,
+    "improvement_pct": 95.6,
+    "reward": 0.896,
+    "planner_gain_pct": 95.6,
+    "measured_gain_pct": null,
+    "timing_note": "estimated by the planner (not timed: time_fn has no actions parameter)"
+   }
+  ],
+  "cost_before": 16873.14,
+  "cost_after": 1021.9,
+  "improvement_pct": 93.9,
+  "time_before_ms": 27.62,
+  "time_after_ms": 0.2,
+  "write_latency_ms": 0.00173,
+  "storage_bytes": 7102464,
+  "explanation": "Why it is slow: Seq Scan on t_438 is the bottleneck: it handles about 85 rows and accounts for about 93.9% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=93.9, loops=1, picked_by=rules, plan_rows=85, relation=t_438, self_cost=15846.0). Best fix: CREATE INDEX ON t_438 (c_328) - Exact-match filter: simulated cost 16,873 -> 1,022 (93.9% lower). The planner's estimated cost drops from 16,873 to 1,022, about 94% lower. 1 other option(s) were also considered.",
+  "explanation_unmasked": "Why it is slow: Seq Scan on orders is the bottleneck: it handles about 85 rows and accounts for about 93.9% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=93.9, loops=1, picked_by=rules, plan_rows=85, relation=orders, self_cost=15846.0). Best fix: CREATE INDEX ON orders (product_id) - Exact-match filter: simulated cost 16,873 -> 1,022 (93.9% lower). The planner's estimated cost drops from 16,873 to 1,022, about 94% lower. 1 other option(s) were also considered.",
+  "deploy_sql": "CREATE INDEX ON orders (product_id)",
+  "deploy_scripts": [
+   "CREATE INDEX ON orders (product_id)",
+   "CREATE INDEX ON orders (product_id, status)"
+  ],
+  "leak_check": true,
+  "match": {
+   "query_id": "q10",
+   "name": "Buyers of one product",
+   "confidence": 0.74,
+   "method": "keywords",
+   "runner_up": "q09"
+  },
+  "llm": {
+   "source": "template",
+   "prompt_leak_ok": true,
+   "reply_leak_ok": null,
+   "latency_ms": 0.4,
+   "fallback_reason": "LLM unavailable: recording uses the template explanation"
+  },
+  "unsafe_rewrite": false,
+  "ai_inputs": {
+   "time_fn": "used",
+   "stats": "used",
+   "column_types": "used"
+  }
+ },
+ "q11": {
+  "query_id": "q11",
+  "masked_query": "SELECT a2.c_2e4 AS x1, DATE_TRUNC('WEEK', a1.c_303) AS x2, a3.c_de3, COUNT(DISTINCT a1.c_720) AS x3, SUM(a1.c_c37) AS x4 FROM t_438 AS a1 JOIN t_b78 AS a2 ON a2.c_13b = a1.c_13b JOIN t_dcb AS a3 ON a3.c_328 = a1.c_328 JOIN t_491 AS a4 ON a4.c_720 = a1.c_720 WHERE a1.c_13b = $1 AND a1.c_303 >= $2 AND a4.c_fdf <> $3 GROUP BY a2.c_2e4, x2, a3.c_de3 ORDER BY x2, x4 DESC",
+  "masked_plan": {
+   "Plan": {
+    "Node Type": "Sort",
+    "Parallel Aware": false,
+    "Async Capable": false,
+    "Startup Cost": 19434.03,
+    "Total Cost": 19441.86,
+    "Plan Rows": 3133,
+    "Plan Width": 62,
+    "Sort Key": [
+     "(date_trunc('week'::text, (a1.c_303)::timestamp with time zone))",
+     "(sum(a1.c_c37)) DESC"
+    ],
+    "Plans": [
+     {
+      "Node Type": "Aggregate",
+      "Strategy": "Sorted",
+      "Partial Mode": "Simple",
+      "Parent Relationship": "Outer",
+      "Parallel Aware": false,
+      "Async Capable": false,
+      "Startup Cost": 19150.28,
+      "Total Cost": 19252.1,
+      "Plan Rows": 3133,
+      "Plan Width": 62,
+      "Group Key": [
+       "a2.c_2e4",
+       "(date_trunc('week'::text, (a1.c_303)::timestamp with time zone))",
+       "a3.c_de3"
+      ],
+      "Plans": [
+       {
+        "Node Type": "Sort",
+        "Parent Relationship": "Outer",
+        "Parallel Aware": false,
+        "Async Capable": false,
+        "Startup Cost": 19150.28,
+        "Total Cost": 19158.11,
+        "Plan Rows": 3133,
+        "Plan Width": 33,
+        "Sort Key": [
+         "a2.c_2e4",
+         "(date_trunc('week'::text, (a1.c_303)::timestamp with time zone))",
+         "a3.c_de3",
+         "a1.c_720"
+        ],
+        "Plans": [
+         {
+          "Node Type": "Nested Loop",
+          "Parent Relationship": "Outer",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Join Type": "Inner",
+          "Startup Cost": 1062.29,
+          "Total Cost": 18968.36,
+          "Plan Rows": 3133,
+          "Plan Width": 33,
+          "Inner Unique": false,
+          "Plans": [
+           {
+            "Node Type": "Seq Scan",
+            "Parent Relationship": "Outer",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Relation Name": "t_b78",
+            "Alias": "a2",
+            "Startup Cost": 0.0,
+            "Total Cost": 1.12,
+            "Plan Rows": 1,
+            "Plan Width": 10,
+            "Filter": "(c_13b = $1)"
+           },
+           {
+            "Node Type": "Gather",
+            "Parent Relationship": "Inner",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Startup Cost": 1062.29,
+            "Total Cost": 18920.24,
+            "Plan Rows": 3133,
+            "Plan Width": 27,
+            "Workers Planned": 2,
+            "Single Copy": false,
+            "Plans": [
+             {
+              "Node Type": "Hash Join",
+              "Parent Relationship": "Outer",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Join Type": "Inner",
+              "Startup Cost": 62.29,
+              "Total Cost": 17606.94,
+              "Plan Rows": 1305,
+              "Plan Width": 27,
+              "Inner Unique": true,
+              "Hash Cond": "(a1.c_328 = a3.c_328)",
+              "Plans": [
+               {
+                "Node Type": "Nested Loop",
+                "Parent Relationship": "Outer",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Join Type": "Inner",
+                "Startup Cost": 0.29,
+                "Total Cost": 17541.5,
+                "Plan Rows": 1305,
+                "Plan Width": 23,
+                "Inner Unique": true,
+                "Plans": [
+                 {
+                  "Node Type": "Seq Scan",
+                  "Parent Relationship": "Outer",
+                  "Parallel Aware": true,
+                  "Async Capable": false,
+                  "Relation Name": "t_438",
+                  "Alias": "a1",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 15846.0,
+                  "Plan Rows": 1453,
+                  "Plan Width": 23,
+                  "Filter": "((c_303 >= $2::date) AND (c_13b = $1))"
+                 },
+                 {
+                  "Node Type": "Index Scan",
+                  "Parent Relationship": "Inner",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Scan Direction": "Forward",
+                  "Index Name": "i_23d",
+                  "Relation Name": "t_491",
+                  "Alias": "a4",
+                  "Startup Cost": 0.29,
+                  "Total Cost": 1.17,
+                  "Plan Rows": 1,
+                  "Plan Width": 4,
+                  "Index Cond": "(c_720 = a1.c_720)",
+                  "Filter": "(c_fdf <> $3::text)"
+                 }
+                ]
+               },
+               {
+                "Node Type": "Hash",
+                "Parent Relationship": "Inner",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Startup Cost": 37.0,
+                "Total Cost": 37.0,
+                "Plan Rows": 2000,
+                "Plan Width": 12,
+                "Plans": [
+                 {
+                  "Node Type": "Seq Scan",
+                  "Parent Relationship": "Outer",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Relation Name": "t_dcb",
+                  "Alias": "a3",
+                  "Startup Cost": 0.0,
+                  "Total Cost": 37.0,
+                  "Plan Rows": 2000,
+                  "Plan Width": 12
+                 }
+                ]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "bitmask": {
+   "filter": "000010001010000000000",
+   "join": "100000011100001000100",
+   "group": "000000000010000010010",
+   "columns": [
+    "t_491.c_720",
+    "t_491.c_2e4",
+    "t_491.c_b0b",
+    "t_491.c_13b",
+    "t_491.c_fdf",
+    "t_491.c_b76",
+    "t_438.c_5b1",
+    "t_438.c_720",
+    "t_438.c_13b",
+    "t_438.c_328",
+    "t_438.c_303",
+    "t_438.c_910",
+    "t_438.c_c37",
+    "t_438.c_e7e",
+    "t_dcb.c_328",
+    "t_dcb.c_2e4",
+    "t_dcb.c_de3",
+    "t_dcb.c_3f6",
+    "t_b78.c_13b",
+    "t_b78.c_2e4",
+    "t_b78.c_b5e"
+   ]
+  },
+  "bottleneck": {
+   "node_id": 8,
+   "operator": "Seq Scan",
+   "relation": "t_438",
+   "rows": 1453,
+   "cost_share_pct": 81.5,
+   "reason": "Seq Scan on t_438 is the bottleneck: it handles about 1,453 rows and accounts for about 81.5% of the plan's estimated cost.",
+   "op": "Seq Scan",
+   "evidence": {
+    "relation": "t_438",
+    "plan_rows": 1453,
+    "actual_rows": null,
+    "loops": 1,
+    "self_cost": 15846.0,
+    "cost_share_pct": 81.5,
+    "picked_by": "rules"
+   },
+   "path": "rules"
+  },
+  "recommendations": [
+   {
+    "kind": "partition",
+    "action": "PARTITION t_438 BY RANGE (c_303) MONTHLY",
+    "cost_before": 19441.86,
+    "novelty": "unseen shape (lower confidence)",
+    "agent_score": 0.806,
+    "write_penalty": 0.03,
+    "verified_by": "hypopg_cost",
+    "reason": "Range filter on this column; partitions let the scan skip whole months: simulated cost 19,442 -> 6,457 (66.8% lower).",
+    "cost_after": 6456.76,
+    "improvement_pct": 66.8,
+    "reward": 0.638,
+    "planner_gain_pct": 66.8,
+    "measured_gain_pct": null,
+    "timing_note": "estimated by the planner (not timed: time_fn has no actions parameter)",
+    "summary": "Partition t_438 by c_303 (67% lower cost on a partitioned sandbox copy, estimated by the planner (not timed); write cost not measured). Zero raw data exposed to the AI (masked metadata only).",
+    "why_not": "Index on t_438(c_13b, c_303) not chosen: it cuts the simulated cost by only 51% vs 67% for the chosen fix."
+   },
+   {
+    "kind": "index",
+    "action": "CREATE INDEX ON t_438 (c_13b, c_303)",
+    "cost_before": 19441.86,
+    "novelty": "unseen shape (lower confidence)",
+    "agent_score": 0.449,
+    "write_penalty": 0.06,
+    "verified_by": "hypopg_cost",
+    "reason": "Exact-match filter(s) then range: simulated cost 19,442 -> 9,430 (51.5% lower).",
+    "cost_after": 9430.29,
+    "improvement_pct": 51.5,
+    "reward": 0.455,
+    "planner_gain_pct": 51.5,
+    "measured_gain_pct": null,
+    "timing_note": "estimated by the planner (not timed: time_fn has no actions parameter)",
+    "write_latency": {
+     "source": "estimated",
+     "note": "width-based write penalty, not measured"
+    }
+   },
+   {
+    "kind": "index",
+    "action": "CREATE INDEX ON t_438 (c_13b)",
+    "cost_before": 19441.86,
+    "novelty": "unseen shape (lower confidence)",
+    "agent_score": 0.449,
+    "write_penalty": 0.03,
+    "verified_by": "hypopg_cost",
+    "reason": "Exact-match filter: simulated cost 19,442 -> 16,358 (15.9% lower).",
+    "cost_after": 16357.52,
+    "improvement_pct": 15.9,
+    "reward": 0.129,
+    "planner_gain_pct": 15.9,
+    "measured_gain_pct": null,
+    "timing_note": "estimated by the planner (not timed: time_fn has no actions parameter)"
+   }
+  ],
+  "cost_before": 19441.86,
+  "cost_after": 6456.76,
+  "improvement_pct": 66.8,
+  "time_before_ms": null,
+  "time_after_ms": null,
+  "write_latency_ms": null,
+  "storage_bytes": null,
+  "explanation": "Why it is slow: Seq Scan on t_438 is the bottleneck: it handles about 1,453 rows and accounts for about 81.5% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=81.5, loops=1, picked_by=rules, plan_rows=1453, relation=t_438, self_cost=15846.0). Best fix: PARTITION t_438 BY RANGE (c_303) MONTHLY - Range filter on this column; partitions let the scan skip whole months: simulated cost 19,442 -> 6,457 (66.8% lower). The planner's estimated cost drops from 19,442 to 6,457, about 67% lower. 2 other option(s) were also considered.",
+  "explanation_unmasked": "Why it is slow: Seq Scan on orders is the bottleneck: it handles about 1,453 rows and accounts for about 81.5% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=81.5, loops=1, picked_by=rules, plan_rows=1453, relation=orders, self_cost=15846.0). Best fix: PARTITION orders BY RANGE (order_date) MONTHLY - Range filter on this column; partitions let the scan skip whole months: simulated cost 19,442 -> 6,457 (66.8% lower). The planner's estimated cost drops from 19,442 to 6,457, about 67% lower. 2 other option(s) were also considered.",
+  "deploy_sql": "PARTITION orders BY RANGE (order_date) MONTHLY",
+  "deploy_scripts": [
+   "PARTITION orders BY RANGE (order_date) MONTHLY",
+   "CREATE INDEX ON orders (region_id, order_date)",
+   "CREATE INDEX ON orders (region_id)"
+  ],
+  "leak_check": true,
+  "match": {
+   "query_id": "q11",
+   "name": "Weekly sales report by region",
+   "confidence": 0.65,
+   "method": "keywords",
+   "runner_up": "q02"
+  },
+  "llm": {
+   "source": "template",
+   "prompt_leak_ok": true,
+   "reply_leak_ok": null,
+   "latency_ms": 1.2,
+   "fallback_reason": "LLM unavailable: recording uses the template explanation"
+  },
+  "unsafe_rewrite": false,
+  "ai_inputs": {
+   "time_fn": "used",
+   "stats": "used",
+   "column_types": "used"
+  }
+ }
+}

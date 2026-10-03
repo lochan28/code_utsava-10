@@ -182,7 +182,7 @@ def test_no_approve_button_when_no_fix_is_safe():
 def test_the_sample_result_has_no_approve_step():
     at, patches = tr.open_page()
     with patches:
-        at.sidebar.toggle[0].set_value(True).run()
+        at.sidebar.toggle(key="show_sample").set_value(True).run()
         assert not at.exception and approve_buttons(at) == [] and script_on(at) is None
 
 

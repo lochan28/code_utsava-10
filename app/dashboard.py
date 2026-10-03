@@ -14,7 +14,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # so "import pipeline" works
 import pipeline  # noqa: E402
-from app import approve, charts, llm, sample_data, tradeoff  # noqa: E402
+from app import approve, charts, demo_mode, llm, sample_data, tradeoff  # noqa: E402
 from app.ui_helpers import (  # noqa: E402
     ai_inputs_line, bottleneck_items, bottleneck_node_id, confidence_counts, confidence_strip,
     evidence_items, match_line, md_safe, novelty_badge, plan_tree_text, sort_recommendations,
@@ -29,7 +29,15 @@ BADGE_REFRESH = "3s"   # How often the "LLM status" badge re-checks on its own, 
 PAGE_TITLE = "AI Database Tuner"
 
 st.set_page_config(page_title=PAGE_TITLE, page_icon=":material/database:", layout="wide")
-llm.start_warmup()   # load the model in the background at app start; only the first call acts
+
+# Demo mode: answers come from RECORDED real analyses (app/demo_mode.py). No Ollama, no database,
+# no sandbox. The switch only sets st.session_state["demo_mode"]; everything below reads it.
+with st.sidebar:
+    st.toggle("Demo mode (recorded results)", key=demo_mode.DEMO_MODE_KEY, value=False,
+              help="Answers the demo questions from stored real runs. Uses no database and no Ollama.")
+demo_on = bool(st.session_state.get(demo_mode.DEMO_MODE_KEY))
+if not demo_on:
+    llm.start_warmup()   # load the model in the background at app start; only the first call acts
 
 
 # ------------------------------------------------------------------
@@ -49,7 +57,11 @@ head_left, head_right = st.columns([3, 1], vertical_alignment="center")
 head_left.title(PAGE_TITLE)
 head_left.caption("Finds slow queries and suggests fixes. The AI only ever sees masked data.")
 with head_right:
-    llm_badge()
+    if demo_on:
+        st.badge("Demo mode · recorded results", icon=":material/movie:", color="violet",
+                 help="No database and no Ollama are used.")
+    else:
+        llm_badge()
 
 
 MASKED_NOTE = ("Masked view: table and column names are hashed and values are replaced. "
@@ -340,26 +352,23 @@ if question:
     entry = {"question": question, "result": None, "error": None}
     with st.spinner("Analysing: masking, finding the bottleneck, simulating fixes..."):
         try:
-            entry["result"] = pipeline.analyze(question)
+            entry["result"] = (demo_mode.answer if demo_on else pipeline.analyze)(question)
         except ValueError as e:    # rejected SQL, or PrivacyError (a subclass of ValueError)
             entry["error"] = str(e)
     st.session_state.history.append(entry)
 
 # Sample data is for looking at the layout only. It is OFF by default, and it can NEVER show
 # while Demo mode is on (Demo mode is for the real demo: no made-up numbers allowed).
-# Step 5 adds the Demo mode switch; it only has to set st.session_state["demo_mode"].
-DEMO_MODE_KEY = "demo_mode"
-demo_mode = bool(st.session_state.get(DEMO_MODE_KEY))
-with st.sidebar:
-    st.toggle("Show sample result (every badge type)", key="show_sample", value=False,
-              disabled=demo_mode,
-              help="Turned off while Demo mode is on." if demo_mode
-              else "Made-up data for checking the layout. Not a real analysis.")
+# The Demo mode switch is at the top of the page. While it is on, the sample switch is HIDDEN.
+if not demo_on:
+    with st.sidebar:
+        st.toggle("Show sample result (every badge type)", key="show_sample", value=False,
+                  help="Made-up data for checking the layout. Not a real analysis.")
 
 if not st.session_state.history:
     st.info("Ask a question to begin, for example: *Why is the weekly sales report slow?*")
 
-if st.session_state.get("show_sample") and not demo_mode:      # the guard: checked at render time
+if st.session_state.get("show_sample") and not demo_on:      # the guard: checked at render time
     with st.sidebar:
         variant = st.radio("Sample variant", sample_data.VARIANTS, key="sample_variant")
     with st.chat_message("assistant"):
@@ -374,4 +383,6 @@ for position, entry in enumerate(st.session_state.history):
         if entry["error"]:
             st.error(entry["error"])
         else:
+            if entry["result"].get("demo"):
+                st.info(demo_mode.LABEL, icon=":material/movie:")
             render_result(entry["result"], key=position, approvable=True)

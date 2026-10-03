@@ -290,7 +290,7 @@ def test_sample_toggle_shows_every_badge_type_with_a_loud_warning():
         for obj, name, value in [(llm, "start_warmup", lambda: None), (mask, "unmask", _decoder_must_not_run)]:
             stack.enter_context(patched(obj, name, value))
         at = AppTest.from_file(DASHBOARD, default_timeout=30).run()
-        at.sidebar.toggle[0].set_value(True).run()
+        at.sidebar.toggle(key="show_sample").set_value(True).run()
     assert not at.exception
     assert any(w.value.startswith("SAMPLE DATA") for w in at.warning)
     m = md(at)
@@ -323,12 +323,12 @@ def test_sample_toggle_is_off_by_default():
         canned = pipeline.analyze(QUESTION)                    # a real (stub) result, no sample data in it
     at, patches = open_page(analyze_returns=canned)
     with patches:
-        assert at.sidebar.toggle[0].value is False and not sample_shown(at)
+        assert at.sidebar.toggle(key="show_sample").value is False and not sample_shown(at)
         at.chat_input[0].set_value(QUESTION).run()            # a real question does not switch it on
         assert not at.exception
-        assert at.sidebar.toggle[0].value is False and not sample_shown(at)
+        assert at.sidebar.toggle(key="show_sample").value is False and not sample_shown(at)
         assert ":red-badge[UNSAFE: results differ]" not in md(at)     # nothing sample-like on the page
-        at.sidebar.toggle[0].set_value(True).run()            # only the person switching it on shows it
+        at.sidebar.toggle(key="show_sample").set_value(True).run()            # only the person switching it on shows it
         assert sample_shown(at) and ":red-badge[UNSAFE: results differ]" in md(at)
 
 
@@ -338,11 +338,11 @@ def test_sample_data_can_never_show_while_demo_mode_is_on():
     with patches:
         assert not at.exception and not sample_shown(at)
         assert ":red-badge[UNSAFE: results differ]" not in md(at)
-        assert at.sidebar.toggle[0].disabled is True                      # the switch is greyed out
+        assert [t for t in at.sidebar.toggle if t.key == "show_sample"] == []      # the sample switch is HIDDEN
     # 2) demo mode switched on WHILE the sample is on screen: it disappears at once
     at, patches = open_page()
     with patches:
-        at.sidebar.toggle[0].set_value(True).run()
+        at.sidebar.toggle(key="show_sample").set_value(True).run()
         assert sample_shown(at)
         at.session_state["demo_mode"] = True
         at.run()
@@ -352,7 +352,7 @@ def test_sample_data_can_never_show_while_demo_mode_is_on():
         at.session_state["demo_mode"] = False
         at.session_state["show_sample"] = False
         at.run()
-        assert at.sidebar.toggle[0].disabled is False and not sample_shown(at)
+        assert at.sidebar.toggle(key="show_sample").disabled is False and not sample_shown(at)   # back, usable
 
 
 def run_all():
