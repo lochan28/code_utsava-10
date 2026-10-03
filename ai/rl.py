@@ -315,6 +315,16 @@ def load_agent():
     return BanditAgent.load(AGENT_PATH) if AGENT_PATH.exists() else BanditAgent()
 
 
+def normalize_stats(stats):
+    """Accept stats with eq_sel already filled in (P4) or with n_distinct (contract v2):
+    eq_sel = 1 / n_distinct. Missing keys become empty instead of crashing."""
+    out = {"rows": {}, "eq_sel": {}, "range_sel": {}, "existing_indexes": []}
+    out.update({k: v for k, v in stats.items() if v is not None})
+    for key, n in stats.get("n_distinct", {}).items():
+        out["eq_sel"].setdefault(key, 1.0 / max(1.0, n))
+    return out
+
+
 def stats_from_plan(masked_plan):
     """Rough stats when the caller has none: rows per table from the plan's scan
     estimates (these are AFTER filters, so tables look smaller than they are).
@@ -333,6 +343,44 @@ def stats_from_plan(masked_plan):
     return {"rows": rows, "eq_sel": {}, "range_sel": {}, "existing_indexes": []}
 
 
+def _fix_phrase(r):
+    if r["kind"] == "rewrite":
+        return "rewrite the query (" + r.get("rule_label", "same-result rewrite") + ")"
+    if r["kind"] == "partition":
+        return "partition " + r["action"].split("PARTITION ", 1)[1].split(" BY RANGE")[0] +             " by " + r["action"].split("(", 1)[1].split(")")[0]
+    idx = [a.split("CREATE INDEX ON ", 1)[1] for a in r["action"].split("; ")]
+    word = "composite index" if any("," in i for i in idx) else "index"
+    return f"add {word}{'es' if len(idx) > 1 else ''} on " + " and ".join(idx)
+
+
+def bundle_summary(recs):
+    """One sentence in the problem statement's style. Bundle = best verified index (or
+    partition) fix + best verified rewrite + unsimulated suggestions. Numbers appear ONLY
+    for verified parts, and are per fix (they were measured separately, not combined)."""
+    index_fix = next((r for r in recs if r["kind"] in ("index", "partition")
+                      and r["verified_by"] != "rule_only" and r["improvement_pct"] > 0), None)
+    rewrite_fix = next((r for r in recs if r["kind"] == "rewrite" and r["verified_by"] == "timed_run"
+                        and r.get("same_results")), None)
+    suggested = [r for r in recs if r["verified_by"] == "rule_only" and r["kind"] != "none"]
+    parts = []
+    if index_fix:
+        cols = index_fix["write_penalty"] / WRITE_PENALTY_PER_COL
+        parts.append(f"{_fix_phrase(index_fix)} ({index_fix['improvement_pct']:.0f}% lower estimated cost "
+                     f"in the HypoPG sandbox, +{cols:.0f} index column{'s' if cols != 1 else ''} to maintain "
+                     f"on writes, write penalty {index_fix['write_penalty']:.2f})")
+    if rewrite_fix:
+        parts.append(f"{_fix_phrase(rewrite_fix)} ({rewrite_fix['speedup']:.1f}x faster measured, same results)")
+    for r in suggested:
+        parts.append(f"{_fix_phrase(r)} (suggested, not simulated)")
+    if not parts:
+        return "No verified improvement found for this query; nothing is recommended. AI saw masked metadata only."
+    text = parts[0][0].upper() + parts[0][1:]
+    if len(parts) > 1:
+        text += ", " + ", ".join(parts[1:-1]) + (", and " if len(parts) > 2 else " and ") + parts[-1]
+    note = " Numbers are per fix, measured separately." if index_fix and rewrite_fix else ""
+    return text + "." + note + " Zero raw data exposed to the AI (masked metadata only)."
+
+
 def recommend(masked_sql, masked_plan, cost_fn, stats=None, time_fn=None, agent=None,
               column_types=None, k=VERIFY_TOP_K):
     """Ranked, verified recommendations for one masked query (CLAUDE.md contract).
@@ -341,10 +389,11 @@ def recommend(masked_sql, masked_plan, cost_fn, stats=None, time_fn=None, agent=
     Added keys: improvement_pct, reward, write_penalty, verified_by
     ("hypopg_cost" | "timed_run" | "rule_only"), novelty, agent_score, and for
     rewrites same_results / time_before_ms / time_after_ms / speedup / verify_note.
-    The first item also carries why_not: one sentence on the best REJECTED option.
+    The first item also carries why_not (one sentence on the best REJECTED option) and
+    summary (the whole recommended bundle in one sentence, verified numbers only).
     Optional: stats (masked table stats), time_fn (see ai/verify.py), agent."""
     agent = agent or load_agent()
-    stats = stats or stats_from_plan(masked_plan)
+    stats = normalize_stats(stats or stats_from_plan(masked_plan))
     try:
         info = sqlinfo.analyze(masked_sql, column_types)
     except sqlinfo.sqlglot.errors.ParseError:
@@ -374,6 +423,7 @@ def recommend(masked_sql, masked_plan, cost_fn, stats=None, time_fn=None, agent=
                 drop = (1 - 1 / v["speedup"]) if v["same_results"] else -1.0
             else:
                 drop = max(-1.0, (before - after) / before) if before else 0.0
+            rec["rule_label"] = c["rule"].replace("_", " ")
             rec.update({"cost_after": after, "verified_by": v["verified_by"], "same_results": v["same_results"],
                         "time_before_ms": v["time_before_ms"], "time_after_ms": v["time_after_ms"],
                         "speedup": v["speedup"], "verify_note": v["note"]})
@@ -418,6 +468,7 @@ def recommend(masked_sql, masked_plan, cost_fn, stats=None, time_fn=None, agent=
         _, c, measured = rejected[0]
     else:
         c, measured = ranked[k][1] if len(ranked) > k else None, None
+    recs[0]["summary"] = bundle_summary(recs)
     if c is not None:
         chosen = None if recs[0]["verified_by"] == "rule_only" else {"drop": chosen_drop, "label": recs[0]["action"]}
         recs[0]["why_not"] = why_not.why_not(c, info, stats, measured, chosen, pairs)

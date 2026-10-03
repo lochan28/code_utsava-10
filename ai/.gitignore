@@ -1,0 +1,6 @@
+# Trained GNN weights: regenerate with  .venv/Scripts/python -m ai.gnn  (see README)
+gnn_weights.pt
+# scratch / experiment outputs
+*.pkl
+gnn_real_*.pt
+__pycache__/

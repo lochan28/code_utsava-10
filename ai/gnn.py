@@ -48,6 +48,12 @@ MISESTIMATE_FLAG = 50  # Rows actual/estimate >= this counts as a badly misestim
                        # (used by the reason text and by the plain-rule override).
 CORRECTION_L2 = 0.01   # Penalty on the GNN's correction to the baseline score. Higher = sticks
                        # closer to "highest self cost"; 0 = free to override anything.
+BOTTLENECK_PATH = "rules"  # Which path find_bottleneck() uses:
+                           #   "rules"        baseline + two plain if-checks (no learning) - DEFAULT
+                           #   "gated_hybrid" baseline; GNN may override rule-flagged nodes if sure
+                           #   "gnn"          the trained model alone
+                           #   "auto"         "gnn" if the saved weights are VALIDATED, else "gated_hybrid"
+                           # Paths needing weights fall back to "rules" when no weights file exists.
 GATE_CONFIDENCE = 0.8  # Gated hybrid: the GNN may override the baseline only when it is at
                        # least this sure AND its pick is a rule-flagged special case.
 
@@ -293,11 +299,25 @@ def choose(masked_plan, model=None, validated=False):
     return base, "gated_hybrid"
 
 
-def find_bottleneck(masked_plan):
+def choose_by_setting(masked_plan, path_setting=None):
+    """(node_id, path actually used) for the BOTTLENECK_PATH setting."""
+    setting = path_setting or BOTTLENECK_PATH
+    if setting == "rules":
+        return choose(masked_plan)
+    model, meta = load_model()
+    if model is None:
+        return choose(masked_plan)                       # no weights -> rules
+    if setting == "gnn":
+        return predict(model, masked_plan), "gnn"
+    if setting == "gated_hybrid":
+        return choose(masked_plan, model, validated=False)
+    return choose(masked_plan, model, meta.get("validated", False))   # "auto"
+
+
+def find_bottleneck(masked_plan, path_setting=None):
     """Bottleneck node of a masked EXPLAIN plan, with a readable reason and evidence.
     The output says which path picked it ("path": gnn / gated_hybrid / rules)."""
-    model, meta = load_model()
-    node_id, path = choose(masked_plan, model, meta.get("validated", False))
+    node_id, path = choose_by_setting(masked_plan, path_setting)
     out = explain_node(masked_plan, node_id, path)
     out["path"] = path
     return out
@@ -345,7 +365,8 @@ if __name__ == "__main__":
     save_model(model, validated, {"heldout_normal_gnn": g_norm, "heldout_normal_baseline": base_norm,
                                   "heldout_normal_n": res["baseline"]["normal"][1]})
     print(f"\nVALIDATED = {validated}  (held-out normal plans: GNN {g_norm} vs baseline {base_norm})"
-          f" -> find_bottleneck() path: {'gnn' if validated else 'gated_hybrid'}")
+          f" -> 'auto' would use: {'gnn' if validated else 'gated_hybrid'}; "
+          f"shipped setting BOTTLENECK_PATH = {BOTTLENECK_PATH!r}")
 
     print("\nEXAMPLE OUTPUTS via find_bottleneck() (held-out plans, weights reloaded from disk):")
     for rule in ("highest_self_cost", "repeated_inner", "misestimate"):
