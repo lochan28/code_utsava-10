@@ -21,6 +21,18 @@ The dict has `text, source, prompt_leak_ok, reply_leak_ok, latency_ms, fallback_
   (admin sees "A value may not be masked, analysis stopped for safety"). `0` = warn only.
   Either way the event is written to the audit log (`analysis_blocked` / `analysis_warned`).
   Open question for the lead: keep strict on for the demo? (Person 4 recommends yes.)
+- `OLLAMA_MODEL` (default `qwen2.5:7b`): which model to use. If the 7b is too slow:
+  `ollama pull qwen2.5:3b`, then `setx OLLAMA_MODEL qwen2.5:3b`, reopen the terminal.
+- `OLLAMA_URL` (default `http://127.0.0.1:11434`): use 127.0.0.1, not `localhost`. On Windows
+  `localhost` tries IPv6 first and adds ~2 s to every request (measured).
+
+## How the LLM part behaves
+- `llm.start_warmup()` (called at dashboard start) loads the model in a background thread.
+- `llm.llm_status()` -> `{status: "live LLM" | "template fallback" | "warming up", reason, model}`.
+- If Ollama is missing, slow (30 s) or returns something odd, the template explanation is used.
+- The model's reply is untrusted text: only displayed, never executed, never used as SQL or
+  as the Approve script. Fenced code blocks are removed from it before display.
+- Tests against a fake Ollama server: `.venv/Scripts/python -m app.test_llm_http`
 
 ## Privacy rules we follow
 - The raw question and pasted SQL are untrusted: they may hold real names, emails, amounts.

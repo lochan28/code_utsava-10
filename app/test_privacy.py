@@ -175,7 +175,7 @@ def test_prompt_uses_only_the_four_allowed_fields():
 
 
 def test_fake_llm_clean_reply_is_used():
-    with fresh_audit_log(), patched(llm, "_call_ollama", lambda p: "  The table is scanned fully; add the index.  "):
+    with fresh_audit_log(), patched(llm, "_call_ollama", lambda p: ("  The table is scanned fully; add the index.  ", {})):
         out = llm.explain(sample(), checker)
         assert (out["source"], out["reply_leak_ok"], out["prompt_leak_ok"]) == ("ollama", True, True)
         assert out["text"] == "The table is scanned fully; add the index."
@@ -183,7 +183,7 @@ def test_fake_llm_clean_reply_is_used():
 
 
 def test_fake_llm_leaky_reply_is_thrown_away_and_not_stored():
-    with fresh_audit_log() as path, patched(llm, "_call_ollama", lambda p: "Look at the orders table for Rahul."):
+    with fresh_audit_log() as path, patched(llm, "_call_ollama", lambda p: ("Look at the orders table for Rahul.", {})):
         out = llm.explain(sample(), checker)
         print(f"      source={out['source']} reply_leak_ok={out['reply_leak_ok']} reason={out['fallback_reason']}")
         assert (out["source"], out["reply_leak_ok"]) == ("template", False)

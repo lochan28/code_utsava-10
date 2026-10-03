@@ -9,8 +9,13 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # so "import pipeline" works
 import pipeline  # noqa: E402
+from app import llm  # noqa: E402
+
+llm.start_warmup()   # load the model in the background at app start; only the first call acts
 
 st.title("AI Database Tuner")
+_s = llm.llm_status()   # the full status badge comes in Step 4; this keeps it visible meanwhile
+st.caption(f"LLM: **{_s['status']}** · {_s['model']} · {_s['reason']}")
 question = st.chat_input("Ask about a slow report, e.g. 'Why is the weekly sales report slow?'")
 if question:
     try:
