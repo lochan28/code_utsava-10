@@ -1,7 +1,7 @@
 """Simulation sandbox: the ONLY module that runs SQL against the database.
 
 Owner: Person 1.
-STATUS: get_plan, cost, index_size_bytes (real build), timed_run, checked_run,
+STATUS: get_plan, cost, index_size_bytes (real build), timed_run, checked_run, table_stats,
         measure_write_latency = REAL.
         slow_queries is still a STUB (fake numbers).
 Keep the signatures and return shapes (see CLAUDE.md "Shared interface contract").
@@ -298,6 +298,76 @@ def checked_run(sql, index_sqls=[]):
     LIMIT with ties can legitimately return different rows each run.
     """
     return _sandbox_run(sql, index_sqls, with_checksum=True)
+
+
+def _range_filters(sql):
+    """{(table, column): ["order_date >= '2026-09-01'", ...]} for every range
+    filter (>, >=, <, <=, BETWEEN) comparing a column with a constant."""
+    tree = sqlglot.parse_one(sql, read="postgres")
+    alias_to_table = {}
+    for t in tree.find_all(exp.Table):
+        alias_to_table[t.name] = t.name
+        alias_to_table[t.alias_or_name] = t.name
+    # Which table owns each column, for unqualified names like "order_date".
+    owners = {}
+    for table, column in _connection().execute(
+            "SELECT table_name, column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = ANY(%s)",
+            (sorted(set(alias_to_table.values())),)):
+        owners.setdefault(column, table)
+
+    found = {}
+    for node in tree.find_all(exp.GT, exp.GTE, exp.LT, exp.LTE, exp.Between):
+        col = node.this
+        others = [node.args.get(k) for k in ("expression", "low", "high") if node.args.get(k)]
+        if isinstance(node.args.get("expression"), exp.Column) and not isinstance(col, exp.Column):
+            col, others = node.expression, [node.this]          # constant on the left: 5 < x
+        if not isinstance(col, exp.Column) or any(o.find(exp.Column) for o in others):
+            continue                                            # not "column vs constant"
+        table = alias_to_table.get(col.table) if col.table else owners.get(col.name)
+        if table is None:
+            continue
+        pred = node.copy()
+        pred.find(exp.Column).replace(exp.column(col.name))     # drop the alias: o.x -> x
+        found.setdefault((table, col.name), []).append(pred.sql(dialect="postgres"))
+    return found
+
+
+def table_stats(sql=None):
+    """Table facts for Person 3's recommend(stats=...), with REAL names (the
+    pipeline masks them before they reach ai/). Read from Postgres's own
+    statistics - no table data is read. Format (see ai/README.md):
+      rows:             {table: row count}
+      eq_sel:           {"table.column": share of rows matching ONE value (1/n_distinct)}
+      range_sel:        {"table.column": share of rows the planner expects for this
+                         query's range filter on that column} - only when sql is given
+      existing_indexes: [(table, (col, ...)), ...] incl. primary keys
+    """
+    conn = _connection()
+    rows = {t: float(n) for t, n in conn.execute(
+        "SELECT relname, reltuples FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "WHERE n.nspname = 'public' AND c.relkind = 'r'")}
+    eq_sel = {}
+    for table, column, n_distinct in conn.execute(
+            "SELECT tablename, attname, n_distinct FROM pg_stats WHERE schemaname = 'public'"):
+        # n_distinct < 0 means "this fraction of the rows", e.g. -1 = every value unique
+        distinct = -n_distinct * rows[table] if n_distinct < 0 else n_distinct
+        eq_sel[f"{table}.{column}"] = 1.0 / max(distinct, 1.0)
+    existing = [(t, tuple(cols)) for t, cols in conn.execute(
+        "SELECT c.relname, array_agg(a.attname ORDER BY k.ord) "
+        "FROM pg_index i JOIN pg_class c ON c.oid = i.indrelid "
+        "JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public' "
+        "CROSS JOIN LATERAL unnest(i.indkey::int2[]) WITH ORDINALITY AS k(attnum, ord) "
+        "JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.attnum "
+        "GROUP BY i.indexrelid, c.relname ORDER BY c.relname")]
+    range_sel = {}
+    if sql is not None:
+        _check_select(sql)
+        for (table, column), preds in _range_filters(sql).items():
+            probe = f"SELECT 1 FROM {table} WHERE " + " AND ".join(preds)
+            expected = get_plan(probe)["Plan"]["Plan Rows"]
+            range_sel[f"{table}.{column}"] = min(1.0, expected / max(rows[table], 1.0))
+    return {"rows": rows, "eq_sel": eq_sel, "range_sel": range_sel, "existing_indexes": existing}
 
 
 def slow_queries(limit=10):
