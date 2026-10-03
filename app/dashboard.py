@@ -111,11 +111,17 @@ def render_rec(rec, top):
             nb = novelty_badge(rec)
             if nb:
                 st.badge(nb[0], color=nb[1])
+            if rec.get("combined"):
+                st.badge("combined fix", icon=":material/layers:", color="gray")
             if top:
                 st.badge("top pick", icon=":material/star:", color="green")
         with c_fix:
             action = rec.get("action")
-            if isinstance(action, str) and action.strip():
+            if isinstance(action, str) and action.strip() and rec.get("combined"):
+                for number, step in enumerate(action.split("; "), 1):      # a combined fix: show BOTH steps
+                    st.caption(f"Step {number} of 2" if number <= 2 else f"Step {number}")
+                    st.code(step, language="sql")
+            elif isinstance(action, str) and action.strip():
                 st.code(action, language="sql")
             else:
                 st.caption("No fix text (the masked SQL could not be analysed).")
@@ -206,6 +212,8 @@ def render_time_panel(t):
                                                   status=t["status"], label_format=",.1f"),
                         width="stretch")
         st.caption(f"{tradeoff.fmt_ms(t['before'])} → {tradeoff.fmt_ms(t['after'])} · Source: {t['source']}")
+        if t.get("note"):
+            st.caption(md_safe(t["note"]))
 
 
 def render_price_cards(n):
@@ -276,6 +284,9 @@ def render_before_after(r):
             render_time_panel(n["time"])
     render_price_cards(n)
     render_tradeoff(n)
+    if n["rejected"]:                         # neutral note: the AI already dropped these, nothing to act on
+        st.info("**Dropped by the AI** (they returned different results in the sandbox):" + chr(10)
+                + chr(10).join(f"- {md_safe(x)}" for x in n["rejected"]), icon=":material/info:")
 
 
 # ------------------------------------------------------------------

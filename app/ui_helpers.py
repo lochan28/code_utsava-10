@@ -176,8 +176,14 @@ def evidence_items(rec):
         items.append(("planner cost", f"{n(rec['cost_before'])} → {n(rec['cost_after'])}"))
     if _num(rec.get("improvement_pct")):
         items.append(("estimated improvement", f"{rec['improvement_pct']:.0f}%"))
-    if _num(rec.get("time_before_ms")) and _num(rec.get("time_after_ms")):
-        items.append(("measured time", f"{n(rec['time_before_ms'])} ms → {n(rec['time_after_ms'])} ms"))
+    before = rec.get("measured_ms_before") if _num(rec.get("measured_ms_before")) else rec.get("time_before_ms")
+    after = rec.get("measured_ms_after") if _num(rec.get("measured_ms_after")) else rec.get("time_after_ms")
+    if _num(before) and _num(after):
+        items.append(("measured time", f"{n(before)} ms → {n(after)} ms"))
+    if _num(rec.get("measured_gain_pct")):
+        items.append(("measured improvement", f"{rec['measured_gain_pct']:.0f}%"))
+    if _num(rec.get("planner_gain_pct")) and _num(rec.get("measured_gain_pct")):
+        items.append(("planner estimate", f"{rec['planner_gain_pct']:.0f}%"))
     if _num(rec.get("speedup")):
         items.append(("speedup", f"{rec['speedup']:.1f}x"))
     if isinstance(rec.get("verify_note"), str) and rec["verify_note"]:

@@ -64,8 +64,8 @@ def top_recommendation(recs):
     return ranked[0] if ranked and tier(ranked[0]) != "unsafe" else None
 
 
-def _pair(before, after, source):
-    pct = improvement(before, after)
+def _pair(before, after, source, pct=None):
+    pct = pct if ok(pct) else improvement(before, after)       # ai/'s own measured_gain_pct wins when it gives one
     return {"before": before, "after": after, "pct": pct, "status": target_status(pct), "source": source}
 
 
@@ -90,7 +90,11 @@ def resolve(r):
     recs = clean_recommendations(r.get("recommendations"))
     top = top_recommendation(recs)
     out = {"top": top, "no_safe": bool(recs) and top is None, "cost": None, "time": None,
-           "write": None, "write_note": None, "storage": None, "storage_note": None}
+           "write": None, "write_note": None, "storage": None, "storage_note": None, "rejected": []}
+    # fixes ai/ dropped because they returned different results (masked text, a few short strings)
+    rejected = (top or (recs[0] if recs else {})).get("rejected_fixes")
+    if isinstance(rejected, list):
+        out["rejected"] = [x for x in rejected if isinstance(x, str)][:5]
     if out["no_safe"]:
         return out
     # With no recommendations at all, the result-level numbers have no one to contradict them.
@@ -103,8 +107,13 @@ def resolve(r):
     if ok(before) and ok(after):
         out["cost"] = _pair(before, after, SOURCE_ESTIMATE)
 
-    if tier(t) == "measured" and ok(t.get("time_before_ms")) and ok(t.get("time_after_ms")):
-        out["time"] = _pair(t["time_before_ms"], t["time_after_ms"], SOURCE_MEASURED)
+    own = [(t.get(b), t.get(a)) for b, a in (("measured_ms_before", "measured_ms_after"),
+                                              ("time_before_ms", "time_after_ms"))]
+    own = next(((b, a) for b, a in own if ok(b) and ok(a)), None)
+    if tier(t) == "measured" and own:
+        out["time"] = _pair(own[0], own[1], SOURCE_MEASURED, t.get("measured_gain_pct"))
+        if isinstance(t.get("timing_note"), str) and t["timing_note"]:
+            out["time"]["note"] = t["timing_note"]
     elif inherit and ok(r.get("time_before_ms")) and ok(r.get("time_after_ms")):
         out["time"] = _pair(r["time_before_ms"], r["time_after_ms"], SOURCE_MEASURED)
 
