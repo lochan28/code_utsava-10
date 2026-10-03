@@ -10,17 +10,25 @@
 
 Adding keys breaks nobody. Anyone reading them should use `.get()`.
 
-## One signature change inside our own code
+## One signature change inside our own code (LEAD: please note)
 `app/llm.explain(masked_result, leak_check) -> dict` (the contract said `explain(masked_result) -> str`).
 Only `pipeline.py` calls it, and `analyze()["explanation"]` is still a plain string.
 `leak_check(text) -> bool` is passed in so `llm.py` never sees the private name mapping.
+The dict has `text, source, prompt_leak_ok, reply_leak_ok, latency_ms, fallback_reason`.
+
+## Settings read from environment variables
+- `PRIVACY_STRICT` (default `1`): if masking leaves a real value behind, `analyze()` STOPS
+  (admin sees "A value may not be masked, analysis stopped for safety"). `0` = warn only.
+  Either way the event is written to the audit log (`analysis_blocked` / `analysis_warned`).
+  Open question for the lead: keep strict on for the demo? (Person 4 recommends yes.)
 
 ## Privacy rules we follow
 - The raw question and pasted SQL are untrusted: they may hold real names, emails, amounts.
   They are used only for matching and for the admin-only display - never in a prompt,
   the audit log or a cache key (`pipeline.cache_key` uses masked text only).
 - Pasted SQL must be one read-only SELECT with no unknown functions.
-- If masking leaves anything real behind, `analyze()` raises `PrivacyError` before the AI runs.
+- If masking leaves anything real behind, `analyze()` raises `PrivacyError` before the AI runs
+  (see `PRIVACY_STRICT` above).
 - Text that fails a leak check is never stored in `app/audit_log.jsonl` (git-ignored); only a marker + hash.
 - Tests: `.venv/Scripts/python -m app.test_privacy`
 

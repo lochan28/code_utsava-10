@@ -108,9 +108,28 @@ def test_broken_masker_is_stopped_before_the_ai():
             pipeline.analyze(PASTED)
         except pipeline.PrivacyError as e:
             print(f"      stopped: {e}")
+            assert str(e) == pipeline.BLOCKED_MESSAGE and "may not be masked" in str(e)
         else:
             raise AssertionError("leaky masked SQL was not stopped")
-        assert llm.get_audit_log() == [], "LLM was reached"
+        log = llm.get_audit_log()
+        assert [e["event"] for e in log] == ["analysis_blocked"], "LLM was reached or event missing"
+        print(f"      audit event: {log[0]}")
+        assert log[0]["strict"] is True and log[0]["query_id"] == "adhoc"
+        assert "rahul" not in everything_logged(path), "leaked text was stored"
+
+
+def test_non_strict_mode_warns_but_the_llm_prompt_is_still_blocked():
+    """PRIVACY_STRICT=0: analysis continues, event is logged, but the prompt check still holds."""
+    with fresh_audit_log() as path, patched(mask, "mask_query", lambda sql, m: sql), \
+            patched(pipeline, "PRIVACY_STRICT", False):
+        r = pipeline.analyze(PASTED)
+        events = [e["event"] for e in llm.get_audit_log()]
+        assert events == ["analysis_warned", "llm_call"], events
+        assert r["llm"]["prompt_leak_ok"] is False and r["leak_check"] is False
+        # The leak is only in the masked query, which the template text never contains,
+        # so the clean template is shown (not the generic "withheld" sentence).
+        assert r["llm"]["source"] == "template" and "rahul" not in r["explanation"].lower()
+        assert "rahul" not in everything_logged(path)
 
 
 def test_leak_added_by_the_ai_side_is_blocked_at_the_llm():

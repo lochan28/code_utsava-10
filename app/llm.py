@@ -183,6 +183,13 @@ def get_audit_log():
         return list(AUDIT_LOG)
 
 
+def audit_event(event, **fields):
+    """Record something other than an LLM call (e.g. 'analysis_blocked').
+    Callers must pass only safe fields: ids, counts, hashes - never raw or leaked text."""
+    _audit({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "event": event, **fields})
+
+
 def _is_clean(leak_check, text):
     """Fail closed: a checker that crashes counts as 'leak found'."""
     try:
@@ -238,6 +245,7 @@ def explain(masked_result, leak_check):
     latency_ms = round((time.perf_counter() - t0) * 1000, 1)
     _audit({
         "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "event": "llm_call",
         "source": source,
         "sent": reply is not None,
         "prompt": prompt if prompt_ok else _redact(prompt),

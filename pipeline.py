@@ -9,6 +9,7 @@ Self-test:  .venv/Scripts/python pipeline.py
 import hashlib
 import json
 import math
+import os
 import re
 
 import sqlglot
@@ -28,6 +29,13 @@ MIN_CONFIDENCE = 0.35      # Below this, the question is "not understood" and we
 TIE_PENALTY = 0.5          # How much a close runner-up lowers confidence.
                            # 0 = ignore ties, 1 = a perfect tie gives 0% confidence.
 DEFAULT_QUERY_ID = "q11"   # Last resort if the slow-query log is empty too.
+PRIVACY_STRICT = os.environ.get("PRIVACY_STRICT", "1") != "0"
+                           # ON (default): if masking leaves a real value behind, the
+                           # analysis STOPS before the AI runs. Set PRIVACY_STRICT=0 to
+                           # only warn (the event is still logged and the page shows
+                           # "LEAK DETECTED"). The LLM prompt check stays on either way.
+BLOCKED_MESSAGE = ("A value may not be masked, so the analysis was stopped for safety. "
+                   "This was recorded in the audit log.")
 
 # Extra words an admin might use for each known query (on top of its name).
 KEYWORDS = {
@@ -204,8 +212,15 @@ def analyze(question):
     bitmask = mask.column_bitmask(q["sql"], mapping)
 
     # Gate: if masking left anything real behind, stop BEFORE the AI sees it.
-    if not is_clean(json.dumps([masked_sql, masked_plan, bitmask])):
-        raise PrivacyError("Masking failed the privacy check, so nothing was sent to the AI.")
+    blob = json.dumps([masked_sql, masked_plan, bitmask])
+    if not is_clean(blob):
+        # Log ids, size and a hash only - never the leaked text itself.
+        llm.audit_event("analysis_blocked" if PRIVACY_STRICT else "analysis_warned",
+                        query_id=match["query_id"], strict=PRIVACY_STRICT,
+                        reason="masked SQL/plan/bitmask failed the leak check",
+                        chars=len(blob), sha256=hashlib.sha256(blob.encode()).hexdigest()[:12])
+        if PRIVACY_STRICT:
+            raise PrivacyError(BLOCKED_MESSAGE)
 
     def cost_fn(m_sql, m_indexes):
         """The AI's only window into the DB: masked SQL in, a number out."""
