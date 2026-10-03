@@ -68,15 +68,21 @@ requests). They are additions only — nothing existing was renamed or removed.
 - `cost(sql, hypo_indexes=[]) -> float` — planner total cost, with HypoPG
   hypothetical indexes (list of `CREATE INDEX ...` strings). Never creates real indexes.
   **(v2)** The list may also contain ONE partition action, exact format
-  `PARTITION <table> BY RANGE (<column>) MONTHLY` (or `YEARLY`); it is costed on a
-  partitioned copy in schema `sandbox`. Anything it cannot simulate → `ValueError`.
+  `PARTITION <table> BY RANGE (<column>) MONTHLY` (MONTHLY only; `YEARLY` is not
+  built); it is costed on a partitioned copy in its own schema `part_<table>_<column>`.
+  Anything it cannot simulate → `ValueError`.
 - **(v2)** `checked_run(sql, index_sqls=[]) -> dict` — `{"ms", "rows", "checksum"}`:
   median real ms on sandbox copies, row count, and an order-independent checksum of
   ALL result rows (`md5(string_agg(md5(t::text), '' ORDER BY md5(t::text)))`).
   Proves a rewrite returns the same rows AND is faster. `timed_run` stays as is.
-- **(v2)** `table_stats() -> dict` — REAL names, masked later by P2:
-  `{"rows": {table: n}, "n_distinct": {"table.col": n}, "existing_indexes": [(table, (cols,)), ...]}`
-  (`existing_indexes` includes primary keys).
+- **(v2)** `table_stats(sql=None) -> dict` — REAL names, masked later by P2. Read
+  from Postgres's own statistics (no table data):
+  `{"rows": {table: n},`
+  ` "eq_sel": {"table.col": share of rows matching ONE value (= 1/n_distinct)},`
+  ` "range_sel": {"table.col": planner's share of rows for THIS query's range filter},`
+  ` "existing_indexes": [(table, (cols,)), ...]}`
+  `range_sel` is filled only when `sql` is given (else `{}`); `existing_indexes`
+  includes primary keys. (Agreed day 1: this replaces the earlier `n_distinct` draft.)
 - `index_size_bytes(index_sql) -> int` — HypoPG estimated size (storage impact).
 - `measure_write_latency(index_sql) -> dict` — `{"before_ms", "after_ms", "delta_ms"}`
   per insert, measured on a copy table in schema `sandbox`.
@@ -102,7 +108,7 @@ requests). They are additions only — nothing existing was renamed or removed.
 - `verify_no_leak(text, mapping) -> bool` — True if no raw name/value remains.
 
 Privacy notes (put in README): numbered placeholders reveal that two values are
-EQUAL, never what they are. Row counts, `n_distinct` and result checksums are
+EQUAL, never what they are. Row counts, selectivities and result checksums are
 metadata (numbers / hashes), not data.
 
 `ai/` (Person 3) — sees ONLY masked data
@@ -117,8 +123,9 @@ metadata (numbers / hashes), not data.
   **(v2)** Full signature: `recommend(masked_sql, masked_plan, cost_fn, stats=None,
   time_fn=None, agent=None, column_types=None)`. Extra keys per recommendation
   (`improvement_pct`, `verified_by`, `novelty`, `why_not`, `summary`, ...) are
-  documented in `ai/README.md`. P3 derives range selectivity from the masked plan +
-  `stats["rows"]`; nobody else supplies `range_sel`.
+  documented in `ai/README.md`. `stats` arrives in the `table_stats` shape above
+  (masked): use `eq_sel` and `range_sel` directly. If a column is missing from
+  `range_sel`, fall back to estimating from the masked plan + `stats["rows"]`.
 - **(v2) OPEN — needs a team decision:** the PS asks for a *GNN-generated* reason,
   but `find_bottleneck` defaults to the `rules` path (GNN not yet validated).
   Decide how the GNN is shown in the demo before the final merge.
@@ -136,7 +143,8 @@ write_latency_ms, storage_bytes, explanation, deploy_sql, leak_check`.
 - `cost_fn(masked_sql, masked_actions)` — un-mask both, call `sandbox.cost`
   (handles indexes AND the partition action; lets `ValueError` propagate).
 - `time_fn(masked_sql)` — un-mask, call `sandbox.checked_run`, return its dict.
-- `stats = mask.mask_stats(sandbox.table_stats(), mapping)`
+- `stats = mask.mask_stats(sandbox.table_stats(real_sql), mapping)` — pass the
+  REAL query so `range_sel` is filled.
 - `column_types = mask.column_types(mapping)`
 
 ## Merge order (lead merges into master)
