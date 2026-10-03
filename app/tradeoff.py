@@ -20,7 +20,7 @@ TARGET_PCT = 50.0      # The problem statement asks for MORE than 50% improvemen
 # FIXED SETTINGS (what the words on the page mean)
 # ============================================================
 BYTES_PER_MB = 1024 * 1024      # shown as "MB", the way Postgres' pg_size_pretty does
-SOURCE_ESTIMATE = "planner estimate"       # HypoPG / EXPLAIN cost, or HypoPG index size
+SOURCE_ESTIMATE = "planner estimate"       # HypoPG / EXPLAIN cost
 SOURCE_MEASURED = "measured"               # really run on a sandbox copy
 SOURCE_NONE = "not available"
 NOT_MEASURED = "not measured"              # what the page shows instead of a missing number

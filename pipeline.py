@@ -189,10 +189,12 @@ def match_question(question):
 # ============================================================
 # Hooks that connect ai/ to the real database (Step 3.5)
 # ============================================================
-# Only actions of this shape are costed. Anything else (PARTITION ..., several
-# statements, DROP ...) is refused with ValueError, which P3 turns into "rule_only".
-# When Person 1's sandbox can cost PARTITION actions (contract v2), allow them here.
-SIMULATABLE_ACTION = re.compile(r"\s*CREATE\s+(UNIQUE\s+)?INDEX\b[^;]*;?\s*", re.I | re.S)
+# Only actions of these two shapes are costed: one CREATE INDEX, or one monthly PARTITION
+# (Person 1's sandbox can cost both). Anything else (YEARLY, several statements, DROP ...)
+# is refused with ValueError, which P3 turns into "rule_only".
+SIMULATABLE_ACTION = re.compile(
+    r"\s*(CREATE\s+(UNIQUE\s+)?INDEX\b[^;]*"
+    r"|PARTITION\s+\w+\s+BY\s+RANGE\s*\(\s*\w+\s*\)\s+MONTHLY)\s*;?\s*", re.I | re.S)
 
 
 def make_cost_fn(original_sql, masked_original, mapping):
@@ -339,7 +341,7 @@ def analyze(question):
     ai_inputs["time_fn"] = ("used" if time_fn else "not available yet") if "time_fn" in takes \
         else "not supported by ai/ yet"
     for label, producer in (
-            ("stats", (lambda: mask.mask_stats(sandbox.table_stats(), mapping))
+            ("stats", (lambda: mask.mask_stats(sandbox.table_stats(q["sql"]), mapping))
              if hasattr(mask, "mask_stats") and hasattr(sandbox, "table_stats") else None),
             ("column_types", (lambda: mask.column_types(mapping))
              if hasattr(mask, "column_types") else None)):

@@ -207,7 +207,7 @@ def render_price_cards(n):
             st.caption(n["storage_note"])
         else:
             st.metric("Extra storage", tradeoff.fmt_storage(n["storage"]))
-            st.caption(f"Source: {tradeoff.SOURCE_ESTIMATE} (HypoPG)" if tradeoff.ok(n["storage"])
+            st.caption(f"Source: {tradeoff.SOURCE_MEASURED} on a sandbox copy" if tradeoff.ok(n["storage"])
                        else f"Source: {tradeoff.SOURCE_NONE}")
 
 

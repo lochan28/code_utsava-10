@@ -174,8 +174,9 @@ def test_page_full_data_charts_numbers_and_sources():
         ("measured milliseconds", [("before", 418.0), ("after", 118.0)])]
     caps = captions(at)
     for source in ("Source: planner estimate", "418 ms → 118 ms · Source: measured",
-                   "Source: measured on a sandbox copy", "Source: planner estimate (HypoPG)"):
+                   "Source: measured on a sandbox copy"):
         assert source in caps, source
+    assert caps.count("Source: measured on a sandbox copy") == 2      # write latency AND storage
     ok_, warn, err = verdicts(at)
     assert len(ok_) == 2 and all("Meets the target: more than 50% improvement." == s for s in ok_) and not warn and not err
     text = page_text(at)

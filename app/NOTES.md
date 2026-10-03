@@ -77,7 +77,7 @@ Shown for the **top pick** (first by trust: measured, simulated, rule-only, unve
 | cost before / after, improvement % | `cost_before`, `cost_after` | planner estimate | improvement is worked out from the two costs. We do NOT use `improvement_pct`: ai/ makes it a TIME drop for rewrites |
 | time before / after | `time_before_ms`, `time_after_ms` (top-level or on a `timed_run` rewrite) | measured | no measured time -> "Not measured, cost estimate only", never an empty chart |
 | write latency | `write_latency_ms` | measured on a sandbox copy | missing -> "not measured", never 0 |
-| storage | `storage_bytes` | planner estimate (HypoPG) | shown in MB (1024*1024); missing -> "not measured". A % needs the table size, which is not in the contract |
+| storage | `storage_bytes` | measured on a sandbox copy (index really built there, then rolled back; HypoPG's guess was ~4x too big) | shown in MB (1024*1024); missing -> "not measured". A % needs the table size, which is not in the contract |
 - Result-level numbers describe the pipeline's best fix (the first listed). They are used for the top pick
   ONLY if the top pick is that first one; otherwise they are not borrowed.
 - A rewrite creates no index, so write latency and storage show "none: a rewrite creates no index" (by design, not a default).
@@ -104,6 +104,7 @@ Shown for the **top pick** (first by trust: measured, simulated, rule-only, unve
 ## 10. Asks for other people
 - **Person 3:** `ai/verify.py` must read `results_match` instead of `rows` / `checksum`
   (see section 2, item 3). Also: `stats` now arrives with `eq_sel` already filled in.
+- (4c) `table_stats` is now called with the SQL so Person 3 gets `range_sel`; `PARTITION ... MONTHLY` is passed to `cost`.
 - **Person 1 (db/sandbox.py):** pasted SQL reaches `get_plan()`, `cost()` and `checked_run()`. They
   must use plain `EXPLAIN` (never `EXPLAIN ANALYZE`) with a `statement_timeout`, in a read-only
   transaction. `checked_run()` is the only one that really executes SQL: sandbox schema only,

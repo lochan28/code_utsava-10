@@ -59,7 +59,8 @@ def test_cost_fn_refuses_anything_but_create_index():
     calls = []
     with patched(sandbox, "cost", lambda sql, idx=[]: calls.append(1) or 1.0):
         cost_fn = pipeline.make_cost_fn(ORIGINAL, MASKED, MAPPING)
-        for bad in ["PARTITION t_a3f BY RANGE (c_d42) MONTHLY",
+        for bad in ["PARTITION t_a3f BY RANGE (c_d42) YEARLY",          # only MONTHLY is simulated
+                    "PARTITION t_a3f BY RANGE (c_d42) MONTHLY; DROP TABLE t_a3f",
                     "DROP TABLE t_a3f",
                     "CREATE INDEX ON t_a3f (c_91b); DROP TABLE t_a3f",
                     "CREATE TABLE t_x AS SELECT 1",
@@ -71,12 +72,20 @@ def test_cost_fn_refuses_anything_but_create_index():
                 continue
             raise AssertionError(f"accepted: {bad!r}")
         try:                                   # one bad action poisons the whole call
-            cost_fn(MASKED, ["CREATE INDEX ON t_a3f (c_91b)", "PARTITION t_a3f BY RANGE (c_d42) MONTHLY"])
+            cost_fn(MASKED, ["CREATE INDEX ON t_a3f (c_91b)", "PARTITION t_a3f BY RANGE (c_d42) YEARLY"])
         except ValueError:
             pass
         else:
             raise AssertionError("mixed list accepted")
     assert calls == [], "sandbox.cost was reached for a refused action"
+
+
+def test_cost_fn_costs_a_monthly_partition_action():
+    calls = []
+    with patched(sandbox, "cost", lambda sql, idx=[]: calls.append((sql, list(idx))) or 7.0):
+        cost_fn = pipeline.make_cost_fn(ORIGINAL, MASKED, MAPPING)
+        assert cost_fn(MASKED, ["PARTITION t_a3f BY RANGE (c_d42) MONTHLY"]) == 7.0
+    assert calls == [(ORIGINAL, ["PARTITION orders BY RANGE (order_date) MONTHLY"])], calls
 
 
 def test_cost_fn_unmasks_a_rewritten_query():
@@ -162,7 +171,7 @@ def test_old_style_recommend_without_extra_arguments_still_works():
     """The stub ai/rl.recommend takes only 3 arguments. Nothing may be built or passed to it."""
     built = []
     patches = [(sandbox, "checked_run", lambda sql: built.append("run") or fake_checked_run(sql)),
-               (sandbox, "table_stats", lambda: built.append("stats") or {}),
+               (sandbox, "table_stats", lambda sql=None: built.append("stats") or {}),
                (mask, "mask_stats", lambda s, m: s), (mask, "column_types", lambda m: {})]
     with ExitStack() as stack:
         stack.enter_context(fresh_audit_log())
@@ -233,7 +242,7 @@ def fake_mask_stats(stats, mapping):
 
 def test_stats_are_masked_checked_completed_and_passed():
     fake = FakeRL()
-    r, log = analyze_with(fake, (sandbox, "table_stats", lambda: RAW_STATS), (mask, "mask_stats", fake_mask_stats))
+    r, log = analyze_with(fake, (sandbox, "table_stats", lambda sql=None: RAW_STATS), (mask, "mask_stats", fake_mask_stats))
     got = fake.calls[0]["stats"]
     print(f"      P3 received stats: {got}")
     assert r["ai_inputs"]["stats"] == "used"
@@ -252,7 +261,7 @@ def test_stats_with_a_real_name_or_value_are_dropped_and_logged_not_fatal():
     }
     for why, bad_masker in leaks.items():
         fake = FakeRL()
-        r, log = analyze_with(fake, (sandbox, "table_stats", lambda: RAW_STATS), (mask, "mask_stats", bad_masker))
+        r, log = analyze_with(fake, (sandbox, "table_stats", lambda sql=None: RAW_STATS), (mask, "mask_stats", bad_masker))
         ev = [e for e in log if e["event"] == "stats_dropped"]
         print(f"      {why}: ai_inputs={r['ai_inputs']['stats']!r}; audit={ev[0]}")
         assert fake.calls[0]["stats"] is None                              # P3 never saw them
@@ -263,7 +272,7 @@ def test_stats_with_a_real_name_or_value_are_dropped_and_logged_not_fatal():
 
 
 def test_stats_that_crash_are_skipped_and_logged_by_type_only():
-    def boom():
+    def boom(sql=None):
         raise ConnectionError("db down at orders.customer_email Rahul")
     fake = FakeRL()
     r, log = analyze_with(fake, (sandbox, "table_stats", boom), (mask, "mask_stats", fake_mask_stats))
