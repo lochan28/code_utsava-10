@@ -1,7 +1,7 @@
 """Simulation sandbox: the ONLY module that runs SQL against the database.
 
 Owner: Person 1.
-STATUS: get_plan, cost, index_size_bytes, timed_run = REAL.
+STATUS: get_plan, cost, index_size_bytes (real build), timed_run = REAL.
         measure_write_latency, slow_queries are still STUBS (fake numbers).
 Keep the signatures and return shapes (see CLAUDE.md "Shared interface contract").
 
@@ -141,8 +141,32 @@ def cost(sql, hypo_indexes=[]):
 
 
 def index_size_bytes(index_sql):
-    """HypoPG's estimated size of the index on disk (storage impact), in bytes.
-    Like cost(), the index is only pretend and is wiped straight after."""
+    """REAL size of the index on disk (storage impact), in bytes.
+
+    Builds the index on the sandbox copy, reads its size, then rolls back so
+    it vanishes. Takes ~0.5 s on 1M orders - fine for a final recommendation,
+    too slow for the RL search loop (use hypopg_index_size_bytes there).
+    """
+    _check_sandbox_index(index_sql)
+    table = _INDEX_SQL.match(index_sql)["table"]
+    ensure_sandbox()
+    conn = _sandbox_connection()
+    try:
+        conn.execute("SELECT pg_advisory_xact_lock(%s)", (SANDBOX_LOCK_ID,))
+        list_indexes = "SELECT indexrelid FROM pg_index WHERE indrelid = %s::regclass"
+        before = {r[0] for r in conn.execute(list_indexes, (table,))}
+        conn.execute(index_sql)
+        (new_oid,) = {r[0] for r in conn.execute(list_indexes, (table,))} - before
+        return int(conn.execute("SELECT pg_relation_size(%s)", (new_oid,)).fetchone()[0])
+    finally:
+        conn.rollback()
+
+
+def hypopg_index_size_bytes(index_sql):
+    """HypoPG's instant GUESS of the index size, in bytes (no real build).
+    Measured 3-4x too big on our data: HypoPG ignores Postgres's btree
+    deduplication of repeated values. Kept for speed and for the
+    "simulated vs real" accuracy comparison."""
     _check_index_sql(index_sql)
     conn = _connection()
     try:
