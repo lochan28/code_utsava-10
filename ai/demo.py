@@ -38,13 +38,20 @@ def recorded_cost_fn(rec):
 
 
 def recorded_fn(calls):
-    """Replay recorded time_fn / write_fn results by their masked SQL (same input -> same dict)."""
-    table = {c["sql"]: c["result"] for c in calls}
+    """Replay recorded time_fn / write_fn results. Same input (masked SQL + actions) -> the
+    recorded results in the order they were recorded (timings are repeated 3 times)."""
+    table = {}
+    for c in calls:
+        table.setdefault((c["sql"], tuple(c.get("actions", []))), []).append(c["result"])
+    used = {}
 
-    def fn(masked_sql, **_):
-        if masked_sql not in table:
+    def fn(masked_sql, actions=(), **_):
+        key = (masked_sql, tuple(actions))
+        if key not in table:
             raise KeyError("not in the recording - run live, or re-record with p3_record_demo.py")
-        return table[masked_sql]
+        i = used.get(key, 0)
+        used[key] = i + 1
+        return table[key][i % len(table[key])]
     return fn
 
 
@@ -82,6 +89,12 @@ def run(cost_fn=None, time_fn=None, stats=None, write_fn=None, out=print):
     out(f"           cost {top['cost_before']:,.0f} -> {top['cost_after']:,.0f}  "
         f"({top['improvement_pct']}% lower){tag}")
     out(f"VERIFIED   {top['verified_by']}{tag}")
+    if top.get("measured_gain_pct") is not None:
+        out(f"MEASURED   {top['measured_ms_before']:,.1f} ms -> {top['measured_ms_after']:,.1f} ms = "
+            f"{top['measured_gain_pct']:.1f}% faster (median of 3 sandbox runs, same results){tag}")
+        out(f"PLANNER    estimate {top['planner_gain_pct']:.1f}% lower cost (planner estimate){tag}")
+    elif top.get("planner_gain_pct") is not None:
+        out(f"PLANNER    estimate {top['planner_gain_pct']:.1f}% lower cost (planner estimate; not timed)")
     out(f"NOVELTY    {top['novelty']}")
     wl_rec = next((r for r in recs if r.get("write_latency")), None)
     if wl_rec:

@@ -63,11 +63,15 @@ Returns recommendations, best first. Contract keys: `kind`, `action`, `cost_befo
 | `improvement_pct` | cost drop (index/partition) or time drop (rewrite, if timed) |
 | `reward` | improvement minus write penalty (what the agent maximises) |
 | `write_penalty` | 0.03 per index column; rewrites 0 |
-| `verified_by` | `hypopg_cost` = simulated with HypoPG; `timed_run` = really run, same results checked; `rule_only` = NOT simulated (e.g. partitioning today) |
+| `verified_by` | `hypopg_cost` = planner cost with HypoPG / the partitioned copy only; `timed_run` = really run on the sandbox copy, same results checked; `rule_only` = NOT simulated |
 | `novelty` | `seen query shape` or `unseen shape (lower confidence)` vs the agent's training |
 | `agent_score` | the agent's predicted reward before simulation |
 | rewrites only | `same_results`, `time_before_ms`, `time_after_ms`, `speedup`, `verify_note`, `rule_label` |
-| first item only | `why_not` (why the best alternative was rejected), `summary` (whole bundle in one sentence; numbers only for verified parts) |
+| index / partition winner | `planner_gain_pct` (planner estimate), `measured_ms_before`, `measured_ms_after`, `measured_gain_pct` (median of 3 sandbox runs; `None` if not timed), `timing_note`; index fixes may also carry `write_latency` (`write_fn`) |
+| first item only | `why_not` (why the best alternative was rejected), `summary` (whole bundle in one sentence: **measured gain first, planner estimate second**, e.g. "59% faster in measured sandbox time (planner estimated 92%)"; without timing: "estimated by the planner (not timed)"), `rejected_fixes` (fixes dropped because the timed run returned different results) |
+
+Ranking and reward always use planner cost (`cost_fn`); measured numbers only change what is
+reported. The winning index/partition fix is timed only when `time_fn` accepts `actions` (below).
 
 `kind` is `index`, `partition`, `rewrite`, or `none` (masked SQL could not be parsed).
 How it works: the agent ranks all candidates (`ai/candidates.py`), then the top 3 are
@@ -106,6 +110,15 @@ time_fn(masked_sql) -> dict                                            # optiona
 #   time_fn(rewritten_sql, compare_to=original_sql) (preferred: no hidden state);
 #   otherwise time_fn(rewritten_sql) right after time_fn(original_sql).
 #   Without it, rewrites are rule_only (planner cost is unreliable for rewrites).
+#   ACTIONS (needed to time the winning index/partition fix): if time_fn has an `actions`
+#   parameter, ai/ calls time_fn(masked_sql, actions=[...masked fix...]) 3 times with and
+#   3 times without the fix -> Person 1 checked_run(unmask(sql), [unmask(a) for a in actions])
+#   on the sandbox copy. If the results differ, the fix is REJECTED. Without `actions`, the
+#   winner stays verified_by="hypopg_cost" and the summary says "estimated by the planner (not timed)".
+
+write_fn(masked_index_sql) -> {"before_ms", "after_ms", "delta_ms"}      # optional
+#   Person 1 measure_write_latency (un-masked by the pipeline). Called for the final index
+#   fix only; its measured per-row insert cost goes into the summary. Never for partitions.
 
 stats = {                                                              # optional, recommended
   "rows":      {"t_x": 1000000.0, ...},            # table sizes (pg_class.reltuples)

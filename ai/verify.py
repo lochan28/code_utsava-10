@@ -45,6 +45,22 @@ def _accepts_compare_to(fn):
     return "compare_to" in params or any(p.kind == p.VAR_KEYWORD for p in params.values())
 
 
+def accepts(fn, param):
+    """Does time_fn accept this keyword (or **kwargs)?"""
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+    return param in params or any(p.kind == p.VAR_KEYWORD for p in params.values())
+
+
+def results_equal(before, after):
+    """Same result set? Uses the pipeline's results_match if given, else rows + checksum."""
+    if "results_match" in after:
+        return bool(after["results_match"])
+    return before.get("rows") == after.get("rows") and before.get("checksum") == after.get("checksum")
+
+
 def verify_rewrite(masked_sql, rewritten_sql, time_fn=None):
     """Run original and rewritten query through time_fn and compare.
 

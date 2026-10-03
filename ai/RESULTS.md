@@ -14,21 +14,23 @@ they are reported as observed ranges, headlined at the conservative end.
 ## 0. Headline: measured time of the recommended fixes (requirement 6)
 Command: `python p3_evidence.py timing`. Original vs the top recommended fix, Person 1 `checked_run()` on the **sandbox
 copies only** (index built inside a rolled-back transaction; partition = the partitioned copy).
-3 runs each (each run is itself a median of P1's repeats); median shown, range in brackets.
+3 runs each (each run is itself a median of P1's repeats); latest run's median shown, its range in
+brackets. `recommend()` now does the same check itself when the pipeline passes a `time_fn`.
 
-| Query | Fix (masked) | Before ms | After ms | Speedup | **Measured drop** | Planner estimate | Same results | Agree? |
-|---|---|---:|---:|---:|---:|---:|---|---|
-| q11 | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 43.4 (37.7-48.4) | 17.9 (14.9-19.2) | 2.4x | **58.9%** | 92.1% | yes | **NO** |
-| q03 | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 35.2 (33.4-37.8) | 1.7 (1.5-2.0) | 20.2x | **95.1%** | 96.0% | yes | yes |
-| q01 | `CREATE INDEX ON t_1c1 (c_1e3)` | 32.5 (31.6-33.5) | 1.1 (0.6-1.1) | 30.4x | **96.7%** | 82.7% | yes | yes |
-| q02 | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 46.3 (44.9-47.2) | 17.7 (14.5-26.3) | 2.6x | **61.8%** | 91.9% | yes | **NO** |
-| q06 | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 41.5 (39.4-45.2) | 18.4 (9.6-20.3) | 2.3x | **55.7%** | 83.8% | yes | **NO** |
-| q08 | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 61.5 (58.6-62.0) | 31.7 (30.5-34.0) | 1.9x | **48.5%** | 47.4% | yes | yes |
+| Query | Fix (masked) | Before ms | After ms | Speedup | **Measured drop** | Measured, all runs | Planner estimate | Trust ratio (planner / measured) | Same results |
+|---|---|---:|---:|---:|---:|---|---:|---:|---|
+| q11 | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 38.7 (34.5-45.1) | 16.9 (15.7-26.3) | 2.3x | **56.3%** | 58.9%, 56.3% | 91.2% | **1.62** (over) | yes |
+| q03 | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 95.6 (70.1-107.7) | 1.7 (1.5-2.3) | 54.9x | **98.2%** | 95.1%, 98.2% | 96.0% | **0.98** | yes |
+| q01 | `CREATE INDEX ON t_1c1 (c_1e3)` | 34.4 (33.6-39.7) | 0.7 (0.3-0.8) | 52.9x | **98.1%** | 96.7%, 98.1% | 82.7% | **0.84** (under) | yes |
+| q02 | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 55.0 (50.6-57.3) | 13.8 (13.7-16.3) | 4.0x | **74.9%** | 61.8%, 74.9% | 91.2% | **1.22** (over) | yes |
+| q06 | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 44.6 (43.5-44.9) | 7.0 (6.9-7.2) | 6.4x | **84.3%** | 55.7%, 84.3% | 83.8% | **0.99** | yes |
+| q08 | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 56.9 (52.1-58.2) | 28.1 (26.7-30.4) | 2.0x | **50.7%** | 48.5%, 50.7% | 47.4% | **0.93** | yes |
 
-**5 of 6 winners are more than 50% faster in measured time**, all with identical results.
-Disagreements: for partitions the planner **overestimates** the gain (e.g. q11 planner ~92% vs measured
-~59%), most likely because skipping partitions saves less real time than the cost model assumes (not verified).
-Treat the planner numbers in sections 2 and 4 as a ranking signal; this table is the real effect.
+**6 of 6 winners are more than 50% faster in measured time in the latest run** (5 of 6 in every run), all with identical results.
+
+**Trust score:** the planner overestimates partition gains by about **1.15x to 1.31x on average** in our runs (planner % / measured %, averaged over the 5 partition winners). For the one index winner it *under*estimates (0.86x, 0.84x). **This is six samples per run, 2 runs** - an
+indication, not a calibration. Biggest gaps: q11 and q02 (planner about 91-92%, measured 56-75%).
+Treat planner numbers (sections 2 and 4) as a ranking signal; measured numbers are the real effect.
 
 ## 1. Rewrites: real time + same results (Person 1 `checked_run()`)
 Command: `python p3_evidence.py rewrites`. Same results = equal row count AND equal checksum of all rows.
@@ -41,27 +43,27 @@ Command: `python p3_evidence.py rewrites`. Same results = equal row count AND eq
 
 q07: the planner **estimated the rewrite 23% more expensive**, but it measured **2.1x faster**, so rewrites are judged by real time.
 
-## 2. Indexes and partitions (top fix per query)
+## 2. Indexes and partitions (top fix per query, as `recommend()` reports it)
 Command: `python p3_evidence.py indexes`. `rl.recommend()` with `ai/rl_agent.json`, real `cost_fn` (HypoPG for indexes,
 partitioned sandbox copy for `PARTITION ... MONTHLY`), masked `table_stats()`, and `write_fn` =
 Person 1 `measure_write_latency()` for the final index fix. Drop / write cost = observed range (section 6).
 
-| Query | Split | Top fix (masked) | Cost drop (range) | Measured write cost (range, insert time) | verified_by | Novelty |
-|---|---|---|---:|---:|---|---|
-| q11 | held-out | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 66.8% to 92.2% | not measured (partition) | `hypopg_cost` | unseen shape (lower confidence) |
-| q03 | held-out | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 96.0% | not measured (partition) | `hypopg_cost` | seen query shape |
-| q01 | train | `CREATE INDEX ON t_1c1 (c_1e3)` | 82.7% | +129% to +215% | `hypopg_cost` | seen query shape |
-| q02 | train | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 73.2% to 92.0% | not measured (partition) | `hypopg_cost` | unseen shape (lower confidence) |
-| q06 | held-out | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 83.8% | not measured (partition) | `hypopg_cost` | seen query shape |
-| q09 | train | `CREATE INDEX ON t_1c1 (c_1e3); CREATE INDEX ON t_1c1 (c_c3a)` | 93.3% | +105% to +340% | `hypopg_cost` | seen query shape |
-| q10 | train | `CREATE INDEX ON t_1c1 (c_c3a)` | 93.9% | +2% to +203% | `hypopg_cost` | unseen shape (lower confidence) |
-| q08 | train | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 47.4% | not measured (partition) | `hypopg_cost` | seen query shape |
+| Query | Split | Top fix (masked) | Planner cost drop (range) | Measured gain (this run) | Measured write cost (range, insert time) | verified_by | Novelty |
+|---|---|---|---:|---:|---:|---|---|
+| q11 | held-out | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 66.8% to 92.2% | 66.2% | not measured (partition) | `timed_run` | unseen shape (lower confidence) |
+| q03 | held-out | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 96.0% | 95.8% | not measured (partition) | `timed_run` | seen query shape |
+| q01 | train | `CREATE INDEX ON t_1c1 (c_1e3)` | 82.7% | 98.8% | +129% to +215% | `timed_run` | seen query shape |
+| q02 | train | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 73.2% to 92.0% | 65.3% | not measured (partition) | `timed_run` | unseen shape (lower confidence) |
+| q06 | held-out | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 83.8% | 78.7% | not measured (partition) | `timed_run` | seen query shape |
+| q09 | train | `CREATE INDEX ON t_1c1 (c_1e3); CREATE INDEX ON t_1c1 (c_c3a)` | 93.3% | 99.6% | +54% to +340% | `timed_run` | seen query shape |
+| q10 | train | `CREATE INDEX ON t_1c1 (c_c3a)` | 93.9% | 99.2% | +2% to +203% | `timed_run` | unseen shape (lower confidence) |
+| q08 | train | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 47.4% | 60.9% | not measured (partition) | `timed_run` | seen query shape |
 
-q11 (the problem statement's example), `summary` (latest run): _Partition t_1c1 by c_02b (92% lower estimated cost on a partitioned sandbox copy; write cost not measured). Zero raw data exposed to the AI (masked metadata only)._
+q11 (the problem statement's example), `summary` (latest run): _Partition t_1c1 by c_02b (66% faster in measured sandbox time (planner estimated 91%); write cost not measured). Zero raw data exposed to the AI (masked metadata only)._
 
-q11, `why_not`: _Index on t_1c1(c_0b8, c_02b) not chosen: it cuts the simulated cost by only 51% vs 92% for the chosen fix._
+q11, `why_not`: _Index on t_1c1(c_0b8, c_02b) not chosen: it cuts the simulated cost by only 51% vs 91% for the chosen fix._
 
-q01, `summary` with a measured write cost (latest run): _Add index on t_1c1 (c_1e3) (83% lower estimated cost in the HypoPG sandbox, +0.00229 ms per inserted row, measured on the sandbox copy (+129% insert time)). Zero raw data exposed to the AI (masked metadata only)._
+q01, `summary` with a measured write cost (latest run): _Add index on t_1c1 (c_1e3) (99% faster in measured sandbox time (planner estimated 83%), +0.00265 ms per inserted row, measured on the sandbox copy (+180% insert time)). Zero raw data exposed to the AI (masked metadata only)._
 
 ## 3. Bottleneck detection on the 11 real plans
 Command: `python p3_evidence.py bottleneck`. `EXPLAIN (ANALYZE, FORMAT JSON)`, masked. Label = step with the highest
@@ -128,11 +130,11 @@ Before = `RESULTS.md` at commit `eac48d7` (indexes only, no partitions, agent tr
 
 | Item | Before | After |
 |---|---|---|
-| q11 top fix | index, 51.5% (`hypopg_cost`) | partition, 66.8% to 92.2% (`hypopg_cost`) |
-| q03 top fix | index, 85.9% (`hypopg_cost`) | partition, 96.0% (`hypopg_cost`) |
-| q02 top fix | index, 32.0% (`hypopg_cost`) | partition, 73.2% to 92.0% (`hypopg_cost`) |
-| q06 top fix | index, 0.1% (`hypopg_cost`) | partition, 83.8% (`hypopg_cost`) |
-| q08 top fix | partition, 0.0% (`rule_only`) | partition, 47.4% (`hypopg_cost`) |
+| q11 top fix | index, 51.5% (`hypopg_cost`) | partition, 66.8% to 92.2% (`timed_run`) |
+| q03 top fix | index, 85.9% (`hypopg_cost`) | partition, 96.0% (`timed_run`) |
+| q02 top fix | index, 32.0% (`hypopg_cost`) | partition, 73.2% to 92.0% (`timed_run`) |
+| q06 top fix | index, 0.1% (`hypopg_cost`) | partition, 83.8% (`timed_run`) |
+| q08 top fix | partition, 0.0% (`rule_only`) | partition, 47.4% (`timed_run`) |
 | q04 rewrite speedup | 10.2x (own timer) | 4.5x (`checked_run`) |
 | q07 rewrite speedup | 2.2x (own timer) | 2.1x (`checked_run`) |
 | q05 rewrite speedup | 2.4x (own timer) | 3.0x (`checked_run`) |
@@ -148,11 +150,11 @@ Observed today (earlier runs + every fresh run of section 2):
 
 | Number | Observed values | Conservative headline |
 |---|---|---|
-| q11 partition cost drop | 73.9%, 73.9%, 73.9%, 92.1%, 92.2%, 84.6%, 92.2%, 66.8%, 91.2% | **66.8%** |
-| q02 partition cost drop | 73.2%, 73.2%, 73.2%, 91.9%, 92.0%, 92.0%, 92.0% | **73.2%** |
-| q10 index write cost (insert time) | +203%, +97%, +53%, +123%, +58%, +73%, +120%, +2%, +66% | **+203%** |
-| q01 index write cost (insert time) | +161%, +156%, +215%, +129%, +210%, +180%, +129% | **+215%** |
-| q09 index write cost (insert time) | +340%, +188%, +177%, +105%, +212%, +231% | **+340%** |
+| q11 partition cost drop | 73.9%, 73.9%, 73.9%, 92.1%, 91.2%, 91.2%, 92.2%, 84.6%, 92.2%, 66.8%, 91.2% | **66.8%** |
+| q02 partition cost drop | 73.2%, 73.2%, 73.2%, 91.9%, 91.2%, 91.2%, 92.0%, 92.0%, 92.0% | **73.2%** |
+| q10 index write cost (insert time) | +203%, +97%, +53%, +123%, +146%, +94%, +58%, +73%, +120%, +2%, +66% | **+203%** |
+| q01 index write cost (insert time) | +161%, +156%, +215%, +129%, +145%, +180%, +210%, +180%, +129% | **+215%** |
+| q09 index write cost (insert time) | +340%, +188%, +177%, +105%, +54%, +127%, +212%, +231% | **+340%** |
 
 Why: each time the sandbox's partitioned copy is rebuilt (teammates / `generate.py` drop stale copies),
 Person 1's code runs `ANALYZE`, which **samples rows at random**, so the planner's statistics and cost
@@ -196,7 +198,7 @@ Command: `python p3_write.py`. Searched: the 4 sales table names and their disti
 plus 3 column names that are everyday words (name, status, category), reported separately. Words are
 not repeated below, so the list does not leak itself.
 
-Files scanned: .gitignore, __init__.py, candidates.py, demo.py, demo_q11_recorded.json, fake_env.py, fixtures.py, gnn.py, plan_gen.py, README.md, RESULTS.md, rewrite.py, rl.py, rl_agent.json, sqlinfo.py, test_range_sel.py, verify.py, why_not.py (not `gnn_weights.pt`, it is not in git).
+Files scanned: .gitignore, __init__.py, candidates.py, demo.py, demo_q11_recorded.json, fake_env.py, fixtures.py, gnn.py, plan_gen.py, README.md, RESULTS.md, rewrite.py, rl.py, rl_agent.json, sqlinfo.py, test_measured.py, test_range_sel.py, verify.py, why_not.py (not `gnn_weights.pt`, it is not in git).
 
 - Sales-name hits in code, fixtures, `rl_agent.json` and demo files: **0**
 - Sales-name hits outside the un-masked section: **0**
@@ -238,27 +240,27 @@ Every hit:
 | plan_gen.py | 216 | everyday word | everyday-word use |
 | README.md | 26 | everyday word | everyday-word use |
 | README.md | 35 | everyday word | everyday-word use |
-| README.md | 137 | everyday word | everyday-word use |
-| RESULTS.md | 186 | sales name | un-masked section (allowed) |
-| RESULTS.md | 187 | everyday word | un-masked section (allowed) |
+| README.md | 150 | everyday word | everyday-word use |
 | RESULTS.md | 188 | sales name | un-masked section (allowed) |
-| RESULTS.md | 189 | sales name | un-masked section (allowed) |
+| RESULTS.md | 189 | everyday word | un-masked section (allowed) |
 | RESULTS.md | 190 | sales name | un-masked section (allowed) |
 | RESULTS.md | 191 | sales name | un-masked section (allowed) |
 | RESULTS.md | 192 | sales name | un-masked section (allowed) |
+| RESULTS.md | 193 | sales name | un-masked section (allowed) |
+| RESULTS.md | 194 | sales name | un-masked section (allowed) |
 | rewrite.py | 42 | everyday word | everyday-word use |
 | rewrite.py | 138 | everyday word | everyday-word use |
 | rewrite.py | 144 | everyday word | everyday-word use |
 | rewrite.py | 172 | everyday word | everyday-word use |
 | rewrite.py | 180 | everyday word | everyday-word use |
-| rl.py | 119 | everyday word | everyday-word use |
 | rl.py | 123 | everyday word | everyday-word use |
-| rl.py | 340 | everyday word | everyday-word use |
-| rl.py | 376 | everyday word | everyday-word use |
-| rl.py | 597 | everyday word | everyday-word use |
-| rl.py | 599 | everyday word | everyday-word use |
-| rl.py | 602 | everyday word | everyday-word use |
-| rl.py | 604 | everyday word | everyday-word use |
+| rl.py | 127 | everyday word | everyday-word use |
+| rl.py | 344 | everyday word | everyday-word use |
+| rl.py | 380 | everyday word | everyday-word use |
+| rl.py | 654 | everyday word | everyday-word use |
+| rl.py | 656 | everyday word | everyday-word use |
+| rl.py | 659 | everyday word | everyday-word use |
+| rl.py | 661 | everyday word | everyday-word use |
 | sqlinfo.py | 4 | everyday word | everyday-word use |
 | sqlinfo.py | 40 | everyday word | everyday-word use |
 | sqlinfo.py | 44 | everyday word | everyday-word use |
@@ -270,4 +272,5 @@ Every hit:
 | sqlinfo.py | 145 | everyday word | everyday-word use |
 | sqlinfo.py | 178 | everyday word | everyday-word use |
 | sqlinfo.py | 184 | everyday word | everyday-word use |
+| test_measured.py | 10 | everyday word | everyday-word use |
 | test_range_sel.py | 9 | everyday word | everyday-word use |

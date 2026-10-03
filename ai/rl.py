@@ -23,6 +23,7 @@ Self-test (train on fake variants, test on held-out query shapes):
 import ast
 import json
 import random
+import statistics
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -43,6 +44,9 @@ WRITE_PENALTY_PER_COL = 0.03   # Reward cost of each index column (slower writes
 PARTITION_WRITE_WIDTH = 1      # Partitioning counted as this many index columns of penalty.
 BACKOFF_STRENGTH = 2.0    # How many real tries it takes before a specific (query kind, fix kind)
                           # estimate outweighs the more general fallback estimate.
+TIME_WINNER_RUNS = 3      # Measured confirmation of the winning index/partition fix: time
+                          # original and fixed this many times each (median). More = steadier,
+                          # slower. Needs a time_fn with an `actions` parameter.
 VERIFY_TOP_K = 3          # Safety net: really simulate the agent's top K picks with cost_fn
                           # and keep the best. Costs K+1 cost_fn calls per query (1 = baseline).
                           # 0 = trust the agent blindly; higher = safer but more simulations.
@@ -394,6 +398,16 @@ def _fix_phrase(r):
     return f"add {word}{'es' if len(idx) > 1 else ''} on " + " and ".join(idx)
 
 
+def _gain_phrase(r):
+    """Measured figure first, planner estimate second; planner only when it was not timed."""
+    planner = r.get("planner_gain_pct", r["improvement_pct"])
+    if r.get("measured_gain_pct") is not None:
+        return (f"{r['measured_gain_pct']:.0f}% faster in measured sandbox time "
+                f"(planner estimated {planner:.0f}%)")
+    where = "on a partitioned sandbox copy" if r["kind"] == "partition" else "in the HypoPG sandbox"
+    return f"{planner:.0f}% lower cost {where}, estimated by the planner (not timed)"
+
+
 def bundle_summary(recs):
     """One sentence in the problem statement's style. Bundle = best verified index (or
     partition) fix + best verified rewrite + unsimulated suggestions. Numbers appear ONLY
@@ -407,9 +421,9 @@ def bundle_summary(recs):
     if index_fix:
         cols = index_fix["write_penalty"] / WRITE_PENALTY_PER_COL
         wl = index_fix.get("write_latency") or {}
+        gain = _gain_phrase(index_fix)
         if index_fix["kind"] == "partition":      # no index involved: costed on a partitioned copy
-            parts.append(f"{_fix_phrase(index_fix)} ({index_fix['improvement_pct']:.0f}% lower estimated cost "
-                         f"on a partitioned sandbox copy; write cost not measured)")
+            parts.append(f"{_fix_phrase(index_fix)} ({gain}; write cost not measured)")
         else:
             if wl.get("source") == "measured":
                 writes = (f"+{wl['delta_ms_per_row']:.3g} ms per inserted row, measured on the sandbox copy "
@@ -417,8 +431,7 @@ def bundle_summary(recs):
             else:
                 writes = (f"+{cols:.0f} index column{'s' if cols != 1 else ''} to maintain on writes "
                           f"(estimated, write penalty {index_fix['write_penalty']:.2f})")
-            parts.append(f"{_fix_phrase(index_fix)} ({index_fix['improvement_pct']:.0f}% lower estimated cost "
-                         f"in the HypoPG sandbox, {writes})")
+            parts.append(f"{_fix_phrase(index_fix)} ({gain}, {writes})")
     if rewrite_fix:
         parts.append(f"{_fix_phrase(rewrite_fix)} ({rewrite_fix['speedup']:.1f}x faster measured, same results)")
     for r in suggested:
@@ -432,12 +445,50 @@ def bundle_summary(recs):
     return text + "." + note + " Zero raw data exposed to the AI (masked metadata only)."
 
 
+def _time_winner(recs, masked_sql, time_fn, runs=TIME_WINNER_RUNS):
+    """Measure the winning index/partition fix for real: original vs fixed, median of `runs`
+    each, through time_fn(masked_sql, actions=[...]) (Person 1 checked_run on the sandbox copy).
+    Additive keys only; ranking and reward stay on planner cost.
+      - same results  -> verified_by = "timed_run", measured_* keys, planner_gain_pct kept
+      - results differ -> the fix is REJECTED (removed) and the next one is tried
+    Returns the list of rejected fixes (as notes)."""
+    rejected = []
+    if time_fn is None or not verify.accepts(time_fn, "actions"):
+        for r in recs:
+            if r["kind"] in ("index", "partition") and r["verified_by"] == "hypopg_cost":
+                r["planner_gain_pct"] = r["improvement_pct"]
+                r["measured_gain_pct"] = None
+                r["timing_note"] = ("estimated by the planner (not timed)" if time_fn is None else
+                                    "estimated by the planner (not timed: time_fn has no actions parameter)")
+        return rejected
+    for r in list(recs):
+        if r["kind"] not in ("index", "partition") or r["verified_by"] != "hypopg_cost" or r["improvement_pct"] <= 0:
+            continue
+        actions = r["action"].split("; ")
+        before = [time_fn(masked_sql, actions=[]) for _ in range(runs)]
+        after = [time_fn(masked_sql, actions=actions) for _ in range(runs)]
+        same = all(verify.results_equal(before[0], x) for x in before[1:] + after)
+        if not same:
+            recs.remove(r)
+            rejected.append(f"{r['action']} rejected: it returned different results in the sandbox run")
+            continue
+        med_b = statistics.median(x["ms"] for x in before)
+        med_a = statistics.median(x["ms"] for x in after)
+        r.update({"verified_by": "timed_run", "measured_ms_before": round(med_b, 2),
+                  "measured_ms_after": round(med_a, 2),
+                  "measured_gain_pct": round(100 * (1 - med_a / med_b), 1) if med_b else None,
+                  "planner_gain_pct": r["improvement_pct"],
+                  "timing_note": f"median of {runs} sandbox runs each, same results"})
+        break                                    # only the winner is timed
+    return rejected
+
+
 def _attach_write_latency(recs, write_fn):
     """Measured write cost for the FINAL verified index fix only (one write_fn call per
     index). Additive: sets rec["write_latency"]; never changes reward or ranking.
     write_fn(masked_index_sql) -> {"before_ms", "after_ms", "delta_ms"} per inserted row
     (signature of Person 1's sandbox.measure_write_latency, un-masked by the pipeline)."""
-    fix = next((r for r in recs if r["kind"] == "index" and r["verified_by"] == "hypopg_cost"
+    fix = next((r for r in recs if r["kind"] == "index" and r["verified_by"] in ("hypopg_cost", "timed_run")
                 and r["improvement_pct"] > 0), None)
     if fix is None:
         return
@@ -539,15 +590,21 @@ def recommend(masked_sql, masked_plan, cost_fn, stats=None, time_fn=None, agent=
             and (t[0]["verified_by"] == "rule_only" or t[0]["improvement_pct"] > 0)]
     if not recs:
         return []
+    rejected_fixes = _time_winner(recs, masked_sql, time_fn)   # measured check of the winner
+    if not recs:
+        return []
     # best rejected = the next-best option we tried, else the top one we never simulated
     chosen_drop = recs[0]["improvement_pct"] / 100
-    rejected = [t for t in tried if t[0] is not recs[0]]
-    if rejected:
-        _, c, measured = rejected[0]
+    others = [t for t in tried if t[0] is not recs[0]]
+    if others:
+        _, c, measured = others[0]
     else:
         c, measured = ranked[k][1] if len(ranked) > k else None, None
     _attach_write_latency(recs, write_fn)
     recs[0]["summary"] = bundle_summary(recs)
+    if rejected_fixes:
+        recs[0]["rejected_fixes"] = rejected_fixes
+        recs[0]["summary"] += " Rejected: " + "; ".join(rejected_fixes) + "."
     if c is not None:
         chosen = None if recs[0]["verified_by"] == "rule_only" else {"drop": chosen_drop, "label": recs[0]["action"]}
         recs[0]["why_not"] = why_not.why_not(c, info, stats, measured, chosen, pairs)
