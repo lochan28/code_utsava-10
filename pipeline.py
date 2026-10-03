@@ -298,11 +298,12 @@ def analyze(question):
     mapping = mask.build_mapping()                      # private, stays here
     raw_literals = _raw_literals(q["sql"])
 
-    def is_clean(text):
+    def is_clean(text, free_text=False):
         """True if text holds no real name (masker's check) and none of the real
-        values from the raw SQL (our own tripwire). Handed to llm.py so it never
-        sees the mapping."""
-        return mask.verify_no_leak(text, mapping) and not any(v in text.lower() for v in raw_literals)
+        values from the raw SQL (our own tripwire). free_text=True for prose (the
+        prompt, the LLM's reply): plain words like "name" are then allowed. JSON blobs
+        stay strict. Handed to llm.py so it never sees the mapping."""
+        return mask.verify_no_leak(text, mapping, free_text) and not any(v in text.lower() for v in raw_literals)
 
     # TODO(Person 1, db/sandbox.py): q["sql"] may have been PASTED by the admin, so it
     # is untrusted. get_plan() and cost() must use plain EXPLAIN (never EXPLAIN ANALYZE)
@@ -373,11 +374,12 @@ def analyze(question):
     best = recs[0]
     masked_result = {"masked_query": masked_sql, "masked_plan": masked_plan,
                      "bitmask": bitmask, "bottleneck": bottleneck, "recommendations": recs}
-    llm_out = llm.explain(masked_result, is_clean)
+    llm_out = llm.explain(masked_result, lambda text: is_clean(text, free_text=True))
     explanation = llm_out["text"]
 
     # Everything the AI saw or produced must be free of real names/values.
-    leak_check = is_clean(json.dumps(masked_result) + explanation)
+    leak_check = (mask.verify_no_leak(json.dumps(masked_result), mapping)
+                  and mask.verify_no_leak(explanation, mapping, free_text=True))
 
     # ---- back on the real side: un-mask only for the admin's screen ----
     deploy_sql = mask.unmask(best["action"], mapping)
