@@ -1,0 +1,258 @@
+{
+ "recorded": true,
+ "recorded_at": "2026-10-03T17:13:04",
+ "source": "p3_record_demo.py: real Postgres, Person 1 sandbox.cost() (read-only + HypoPG), masked",
+ "question": "Why is the weekly sales report slow?",
+ "query_id": "q11",
+ "masked_sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a JOIN t_21e AS a4 ON a4.c_1e3 = a1.c_1e3 WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND a4.c_03e <> $3 GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
+ "masked_plan": {
+  "Plan": {
+   "Node Type": "Sort",
+   "Parallel Aware": false,
+   "Startup Cost": 19434.03,
+   "Total Cost": 19441.86,
+   "Plan Rows": 3133,
+   "Plan Width": 62,
+   "Actual Rows": 40,
+   "Actual Loops": 1,
+   "Plans": [
+    {
+     "Node Type": "Aggregate",
+     "Strategy": "Sorted",
+     "Partial Mode": "Simple",
+     "Parent Relationship": "Outer",
+     "Parallel Aware": false,
+     "Startup Cost": 19150.28,
+     "Total Cost": 19252.1,
+     "Plan Rows": 3133,
+     "Plan Width": 62,
+     "Actual Rows": 40,
+     "Actual Loops": 1,
+     "Plans": [
+      {
+       "Node Type": "Sort",
+       "Parent Relationship": "Outer",
+       "Parallel Aware": false,
+       "Startup Cost": 19150.28,
+       "Total Cost": 19158.11,
+       "Plan Rows": 3133,
+       "Plan Width": 33,
+       "Actual Rows": 3215,
+       "Actual Loops": 1,
+       "Plans": [
+        {
+         "Node Type": "Nested Loop",
+         "Parent Relationship": "Outer",
+         "Parallel Aware": false,
+         "Join Type": "Inner",
+         "Startup Cost": 1062.29,
+         "Total Cost": 18968.36,
+         "Plan Rows": 3133,
+         "Plan Width": 33,
+         "Actual Rows": 3215,
+         "Actual Loops": 1,
+         "Plans": [
+          {
+           "Node Type": "Seq Scan",
+           "Parent Relationship": "Outer",
+           "Parallel Aware": false,
+           "Startup Cost": 0.0,
+           "Total Cost": 1.12,
+           "Plan Rows": 1,
+           "Plan Width": 10,
+           "Actual Rows": 1,
+           "Actual Loops": 1,
+           "Relation Name": "t_f23"
+          },
+          {
+           "Node Type": "Gather",
+           "Parent Relationship": "Inner",
+           "Parallel Aware": false,
+           "Startup Cost": 1062.29,
+           "Total Cost": 18920.24,
+           "Plan Rows": 3133,
+           "Plan Width": 27,
+           "Actual Rows": 3215,
+           "Actual Loops": 1,
+           "Workers Planned": 2,
+           "Workers Launched": 2,
+           "Plans": [
+            {
+             "Node Type": "Hash Join",
+             "Parent Relationship": "Outer",
+             "Parallel Aware": false,
+             "Join Type": "Inner",
+             "Startup Cost": 62.29,
+             "Total Cost": 17606.94,
+             "Plan Rows": 1305,
+             "Plan Width": 27,
+             "Actual Rows": 1072,
+             "Actual Loops": 3,
+             "Plans": [
+              {
+               "Node Type": "Nested Loop",
+               "Parent Relationship": "Outer",
+               "Parallel Aware": false,
+               "Join Type": "Inner",
+               "Startup Cost": 0.29,
+               "Total Cost": 17541.5,
+               "Plan Rows": 1305,
+               "Plan Width": 23,
+               "Actual Rows": 1072,
+               "Actual Loops": 3,
+               "Plans": [
+                {
+                 "Node Type": "Seq Scan",
+                 "Parent Relationship": "Outer",
+                 "Parallel Aware": true,
+                 "Startup Cost": 0.0,
+                 "Total Cost": 15846.0,
+                 "Plan Rows": 1453,
+                 "Plan Width": 23,
+                 "Actual Rows": 1183,
+                 "Actual Loops": 3,
+                 "Relation Name": "t_1c1"
+                },
+                {
+                 "Node Type": "Index Scan",
+                 "Parent Relationship": "Inner",
+                 "Parallel Aware": false,
+                 "Startup Cost": 0.29,
+                 "Total Cost": 1.17,
+                 "Plan Rows": 1,
+                 "Plan Width": 4,
+                 "Actual Rows": 1,
+                 "Actual Loops": 3548,
+                 "Relation Name": "t_21e",
+                 "Index Name": "i_6d7"
+                }
+               ]
+              },
+              {
+               "Node Type": "Hash",
+               "Parent Relationship": "Inner",
+               "Parallel Aware": false,
+               "Startup Cost": 37.0,
+               "Total Cost": 37.0,
+               "Plan Rows": 2000,
+               "Plan Width": 12,
+               "Actual Rows": 2000,
+               "Actual Loops": 3,
+               "Plans": [
+                {
+                 "Node Type": "Seq Scan",
+                 "Parent Relationship": "Outer",
+                 "Parallel Aware": false,
+                 "Startup Cost": 0.0,
+                 "Total Cost": 37.0,
+                 "Plan Rows": 2000,
+                 "Plan Width": 12,
+                 "Actual Rows": 2000,
+                 "Actual Loops": 3,
+                 "Relation Name": "t_0a3"
+                }
+               ]
+              }
+             ]
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "stats": {
+  "rows": {
+   "t_21e": 50000.0,
+   "t_0a3": 2000.0,
+   "t_f23": 10.0,
+   "t_1c1": 1000000.0
+  },
+  "eq_sel": {
+   "t_21e.c_1e3": 2e-05,
+   "t_21e.c_82a": 0.00390625,
+   "t_21e.c_822": 2e-05,
+   "t_21e.c_0b8": 0.1,
+   "t_21e.c_03e": 0.3333333333333333,
+   "t_21e.c_91b": 0.000547945205479452,
+   "t_0a3.c_c3a": 0.0005,
+   "t_0a3.c_82a": 0.0005,
+   "t_0a3.c_edb": 0.125,
+   "t_0a3.c_683": 0.000502008032128514,
+   "t_f23.c_0b8": 0.1,
+   "t_f23.c_82a": 0.1,
+   "t_f23.c_aff": 0.2,
+   "t_1c1.c_ca1": 1e-06,
+   "t_1c1.c_1e3": 4.6459765842780154e-05,
+   "t_1c1.c_0b8": 0.1,
+   "t_1c1.c_c3a": 0.0005027652086475615,
+   "t_1c1.c_02b": 0.0009132420091324201,
+   "t_1c1.c_1a7": 0.2,
+   "t_1c1.c_cf3": 0.00012307692307692307,
+   "t_1c1.c_073": 0.2
+  },
+  "range_sel": {
+   "t_1c1.c_02b": 0.027047
+  },
+  "existing_indexes": [
+   [
+    "t_21e",
+    [
+     "c_1e3"
+    ]
+   ],
+   [
+    "t_0a3",
+    [
+     "c_c3a"
+    ]
+   ],
+   [
+    "t_f23",
+    [
+     "c_0b8"
+    ]
+   ],
+   [
+    "t_1c1",
+    [
+     "c_ca1"
+    ]
+   ]
+  ]
+ },
+ "cost_calls": [
+  {
+   "sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a JOIN t_21e AS a4 ON a4.c_1e3 = a1.c_1e3 WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND a4.c_03e <> $3 GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
+   "actions": [],
+   "cost": 19441.86
+  },
+  {
+   "sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a JOIN t_21e AS a4 ON a4.c_1e3 = a1.c_1e3 WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND a4.c_03e <> $3 GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
+   "actions": [
+    "CREATE INDEX ON t_1c1 (c_0b8)"
+   ],
+   "cost": 16357.52
+  },
+  {
+   "sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a JOIN t_21e AS a4 ON a4.c_1e3 = a1.c_1e3 WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND a4.c_03e <> $3 GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
+   "actions": [
+    "CREATE INDEX ON t_1c1 (c_0b8, c_02b)"
+   ],
+   "cost": 9430.29
+  },
+  {
+   "sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a JOIN t_21e AS a4 ON a4.c_1e3 = a1.c_1e3 WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND a4.c_03e <> $3 GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
+   "actions": [
+    "CREATE INDEX ON t_1c1 (c_c3a)"
+   ],
+   "cost": 19441.86
+  }
+ ],
+ "time_calls": []
+}
