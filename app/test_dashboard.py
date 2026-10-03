@@ -5,12 +5,14 @@ Run:  .venv/Scripts/python -m app.test_dashboard      (from the project folder)
 Ollama is switched off in these tests (its call is replaced), so they give the same
 result whether or not Ollama is running on the machine.
 """
+from contextlib import ExitStack
 from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
 
 import pipeline
 from app import llm
+from app.test_support import AI_STAND_INS, T
 from app.test_privacy import PASTED, fresh_audit_log, patched
 from app.ui_helpers import match_line, plan_tree_text
 from privacy import mask
@@ -70,7 +72,11 @@ def test_first_render_shows_hint_and_status_badge():
 
 
 def test_question_shows_match_privacy_badge_masked_query_and_plan():
-    with fresh_audit_log(), patched(llm, "_call_ollama", _no_ollama), patched(llm, "start_warmup", lambda: None):
+    with ExitStack() as stack:
+        stack.enter_context(fresh_audit_log())
+        for obj, name, value in [(llm, "_call_ollama", _no_ollama), (llm, "start_warmup", lambda: None),
+                                 *AI_STAND_INS]:
+            stack.enter_context(patched(obj, name, value))
         at = run_app(QUESTION)
         md = markdown_values(at)
         print(f"      captions: {[c.value[:60] for c in at.caption][-1:]}")
@@ -78,9 +84,9 @@ def test_question_shows_match_privacy_badge_masked_query_and_plan():
         assert any(c.value.startswith("Matched **Weekly sales report by region** (q11)") for c in at.caption)
         assert any(v.startswith(":green-badge[") and "0 raw values exposed" in v for v in md)
         assert any("Masked query" in v for v in md)
-        assert any(c.value.startswith("SELECT ... FROM t_a3f") for c in at.code)        # masked query
+        assert any(c.value.startswith("SELECT") and T in c.value for c in at.code)       # masked query (real masked name)
         assert [e.label for e in at.expander] == ["Masked execution plan"]
-        assert any(c.value.startswith("Seq Scan on t_a3f") for c in at.code)            # plan tree
+        assert any(f"Seq Scan on {T}" in c.value for c in at.code)                       # plan tree
         # the real table name must not appear anywhere in the masked parts of the page
         masked_parts = [c.value for c in at.code if c.language in ("sql", "text")][:2]
         assert not any("orders" in p for p in masked_parts), masked_parts

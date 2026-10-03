@@ -259,6 +259,20 @@ def _complete_stats(stats):
     return out
 
 
+def _all_strings(value):
+    """Every dict KEY and every text value inside `value`. The masker's JSON check reads only
+    VALUES, but stats and column_types carry their names in their KEYS."""
+    if isinstance(value, dict):
+        for k, v in value.items():
+            yield str(k)
+            yield from _all_strings(v)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            yield from _all_strings(v)
+    elif isinstance(value, str):
+        yield value
+
+
 def _masked_extra(label, producer, is_clean, query_id):
     """Build ONE optional masked input for ai/ (stats, column_types).
 
@@ -272,7 +286,9 @@ def _masked_extra(label, producer, is_clean, query_id):
     except Exception as e:                               # noqa: BLE001
         llm.audit_event(f"{label}_unavailable", query_id=query_id, error=type(e).__name__)
         return None, "unavailable"
-    blob = json.dumps(value, default=str)
+    # Keys and values are checked together as plain text (the prefix keeps it from ever
+    # parsing as JSON, where the masker would skip the keys).
+    blob = "keys and values: " + " ".join(_all_strings(value))
     if not is_clean(blob):
         llm.audit_event(f"{label}_dropped", query_id=query_id, reason="failed the leak check",
                         chars=len(blob), sha256=hashlib.sha256(blob.encode()).hexdigest()[:12])

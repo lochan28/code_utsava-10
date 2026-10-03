@@ -1,5 +1,6 @@
 """Tests for the hooks that connect ai/ to the database (Step 3.5): cost_fn, time_fn,
-stats, column_types.  All use FAKE numbers and fake functions: no database needed.
+stats, column_types.  All use FAKE numbers and fake functions; names come from the REAL masker's mapping, and the
+slow real measurements are replaced by fast fakes.
 
 Run:  .venv/Scripts/python -m app.test_pipeline_hooks      (from the project folder)
 """
@@ -38,16 +39,19 @@ def patched(obj, name, value):
 
 # ---------------------------------------------------------------- 1) cost_fn
 ORIGINAL = "SELECT * FROM orders WHERE region_id = 3"        # the admin's real SQL
-MASKED = "SELECT * FROM t_a3f WHERE c_91b = $1"
 MAPPING = mask.build_mapping()
+# The REAL masked names (they come from the secret key, so we look them up, never hard-code them).
+T = MAPPING.tables["orders"]
+C_REGION, C_DATE, C_ORDER = (MAPPING.columns[c] for c in ("region_id", "order_date", "order_id"))
+MASKED = f"SELECT * FROM {T} WHERE {C_REGION} = $1"
 
 
 def test_cost_fn_costs_index_actions_and_unmasks_them():
     calls = []
     with patched(sandbox, "cost", lambda sql, idx=[]: calls.append((sql, list(idx))) or 123.0):
         cost_fn = pipeline.make_cost_fn(ORIGINAL, MASKED, MAPPING)
-        assert cost_fn(MASKED, ["CREATE INDEX ON t_a3f (c_91b, c_d42)"]) == 123.0
-        assert cost_fn(MASKED, ["CREATE UNIQUE INDEX ON t_a3f (c_91b);"]) == 123.0
+        assert cost_fn(MASKED, [f"CREATE INDEX ON {T} ({C_REGION}, {C_DATE})"]) == 123.0
+        assert cost_fn(MASKED, [f"CREATE UNIQUE INDEX ON {T} ({C_REGION});"]) == 123.0
         assert cost_fn(MASKED, []) == 123.0
     print(f"      sandbox.cost got: {calls[0]}")
     # the original query goes in exactly as written; the index names are un-masked privately
@@ -84,7 +88,7 @@ def test_cost_fn_costs_a_monthly_partition_action():
     calls = []
     with patched(sandbox, "cost", lambda sql, idx=[]: calls.append((sql, list(idx))) or 7.0):
         cost_fn = pipeline.make_cost_fn(ORIGINAL, MASKED, MAPPING)
-        assert cost_fn(MASKED, ["PARTITION t_a3f BY RANGE (c_d42) MONTHLY"]) == 7.0
+        assert cost_fn(MASKED, [f"PARTITION {T} BY RANGE ({C_DATE}) MONTHLY"]) == 7.0
     assert calls == [(ORIGINAL, ["PARTITION orders BY RANGE (order_date) MONTHLY"])], calls
 
 
@@ -92,7 +96,7 @@ def test_cost_fn_unmasks_a_rewritten_query():
     calls = []
     with patched(sandbox, "cost", lambda sql, idx=[]: calls.append(sql) or 1.0):
         cost_fn = pipeline.make_cost_fn(ORIGINAL, MASKED, MAPPING)
-        cost_fn("SELECT c_91b FROM t_a3f", [])
+        cost_fn(f"SELECT {C_REGION} FROM {T}", [])
     assert calls == ["SELECT region_id FROM orders"], calls
 
 
@@ -109,7 +113,7 @@ class FakeRL:
     def __call__(self, masked_sql, masked_plan, cost_fn, stats=None, time_fn=None, agent=None,
                  column_types=None):
         self.calls.append({"stats": stats, "time_fn": time_fn, "column_types": column_types})
-        recs = [{"kind": "index", "action": "CREATE INDEX ON t_a3f (c_91b)",
+        recs = [{"kind": "index", "action": f"CREATE INDEX ON {T} ({C_REGION})",
                  "cost_before": 100.0, "cost_after": 10.0, "reason": "no index"}]
         if time_fn:
             self.time_answers.append(time_fn(masked_sql))
@@ -136,13 +140,18 @@ def _no_ollama(prompt):
     raise llm.LLMUnavailable("Ollama is off in this test")
 
 
+FAST_MEASUREMENTS = [(sandbox, "timed_run", lambda sql, idx=[]: 10.0),
+                     (sandbox, "measure_write_latency", lambda index_sql: {"delta_ms": 0.001}),
+                     (sandbox, "index_size_bytes", lambda index_sql: 1_000_000)]
+
+
 def analyze_with(fake_rl, *patches):
     """Run pipeline.analyze with a fake recommend() plus extra (obj, name, value) patches.
     Returns (result, audit log)."""
     with ExitStack() as stack:
         stack.enter_context(fresh_audit_log())
         for obj, name, value in [(llm, "_call_ollama", _no_ollama), (llm, "start_warmup", lambda: None),
-                                 (rl, "recommend", fake_rl), *patches]:
+                                 (rl, "recommend", fake_rl), *FAST_MEASUREMENTS, *patches]:
             stack.enter_context(patched(obj, name, value))
         result = pipeline.analyze("Why is the weekly sales report slow?")
         return result, llm.get_audit_log()
@@ -173,18 +182,22 @@ def test_old_style_recommend_without_extra_arguments_still_works():
     patches = [(sandbox, "checked_run", lambda sql: built.append("run") or fake_checked_run(sql)),
                (sandbox, "table_stats", lambda sql=None: built.append("stats") or {}),
                (mask, "mask_stats", lambda s, m: s), (mask, "column_types", lambda m: {})]
+    def three_argument_recommend(masked_sql, masked_plan, cost_fn):          # the old signature
+        return [{"kind": "index", "action": f"CREATE INDEX ON {T} ({C_REGION})", "cost_before": 100.0,
+                 "cost_after": 10.0, "reason": "no index"}]
     with ExitStack() as stack:
         stack.enter_context(fresh_audit_log())
-        for obj, name, value in [(llm, "_call_ollama", _no_ollama), (llm, "start_warmup", lambda: None), *patches]:
+        for obj, name, value in [(llm, "_call_ollama", _no_ollama), (llm, "start_warmup", lambda: None),
+                                 (rl, "recommend", three_argument_recommend), *FAST_MEASUREMENTS, *patches]:
             stack.enter_context(patched(obj, name, value))
-        r = pipeline.analyze("Why is the weekly sales report slow?")      # real stub rl.recommend
+        r = pipeline.analyze("Why is the weekly sales report slow?")
     assert built == [], f"built inputs the AI cannot take: {built}"
     assert set(r["ai_inputs"].values()) == {"not supported by ai/ yet"}
 
 
 # ---------------------------------------------------------------- 2) time_fn
 def test_time_fn_gives_ai_only_ms_and_results_match():
-    fake = FakeRL(rewrites=["SELECT SAME FROM t_a3f"])
+    fake = FakeRL(rewrites=[f"SELECT SAME FROM {T}"])
     r, log = analyze_with(fake, (sandbox, "checked_run", fake_checked_run))
     print(f"      P3 received: {fake.time_answers}")
     assert fake.time_answers == [{"ms": 100.0, "results_match": True}, {"ms": 20.0, "results_match": True}]
@@ -194,8 +207,8 @@ def test_time_fn_gives_ai_only_ms_and_results_match():
 
 
 def test_different_checksums_flag_an_unsafe_rewrite_and_demote_it():
-    for bad in ("SELECT DIFF FROM t_a3f", "SELECT DIFFROWS FROM t_a3f"):          # other values / other count
-        fake = FakeRL(rewrites=["SELECT SAME FROM t_a3f", bad])   # the bad one ends up FIRST in P3's list
+    for bad in (f"SELECT DIFF FROM {T}", f"SELECT DIFFROWS FROM {T}"):          # other values / other count
+        fake = FakeRL(rewrites=[f"SELECT SAME FROM {T}", bad])   # the bad one ends up FIRST in P3's list
         r, log = analyze_with(fake, (sandbox, "checked_run", fake_checked_run))
         recs = r["recommendations"]
         print(f"      {bad[:22]!r}: P3 got {fake.time_answers[-1]}; order now "
@@ -213,7 +226,7 @@ def test_different_checksums_flag_an_unsafe_rewrite_and_demote_it():
 def test_failed_timing_run_retries_without_time_fn_and_logs_only_the_error_type():
     def broken(sql):
         raise RuntimeError("could not run: orders Rahul")           # message holds real names
-    fake = FakeRL(rewrites=["SELECT SAME FROM t_a3f"])
+    fake = FakeRL(rewrites=[f"SELECT SAME FROM {T}"])
     r, log = analyze_with(fake, (sandbox, "checked_run", broken))
     ev = [e for e in log if e["event"] == "time_fn_failed"]
     print(f"      audit: {ev[0]}")
@@ -246,9 +259,9 @@ def test_stats_are_masked_checked_completed_and_passed():
     got = fake.calls[0]["stats"]
     print(f"      P3 received stats: {got}")
     assert r["ai_inputs"]["stats"] == "used"
-    assert got["rows"] == {"t_a3f": 1_000_000.0}
-    assert got["existing_indexes"] == [("t_a3f", ("order_id",)), ("t_a3f", ("c_91b",))]
-    assert got["eq_sel"] == {"t_a3f.c_91b": 0.1, "t_a3f.c_d42": 0.001}      # 1/10 and 1/(0.001*1e6)
+    assert got["rows"] == {T: 1_000_000.0}
+    assert got["existing_indexes"] == [(T, (C_ORDER,)), (T, (C_REGION,))]
+    assert got["eq_sel"] == {f"{T}.{C_REGION}": 0.1, f"{T}.{C_DATE}": 0.001}      # 1/10 and 1/(0.001*1e6)
     assert got["range_sel"] == {} and "orders" not in json.dumps(got)
     assert events(log) == []
 
@@ -257,7 +270,7 @@ def test_stats_with_a_real_name_or_value_are_dropped_and_logged_not_fatal():
     leaks = {
         "unmasked table name": lambda s, m: {**fake_mask_stats(s, m), "rows": {"orders": 1.0}},
         "real value from the query": lambda s, m: {**fake_mask_stats(s, m),
-                                                   "existing_indexes": [("t_a3f", ("small_business",))]},
+                                                   "existing_indexes": [(T, ("small_business",))]},
     }
     for why, bad_masker in leaks.items():
         fake = FakeRL()
@@ -294,12 +307,12 @@ def test_column_types_pass_through_when_the_masker_has_them_else_skip():
     fake = FakeRL()
     r, _ = analyze_with(fake, *NO_HOOKS)
     assert fake.calls[0]["column_types"] is None and r["ai_inputs"]["column_types"] == "not available yet"
-    types = {"t_a3f.c_91b": "number", "t_a3f.c_d42": "date"}
+    types = {f"{T}.{C_REGION}": "number", f"{T}.{C_DATE}": "date"}
     fake = FakeRL()
     r, _ = analyze_with(fake, (mask, "column_types", lambda m: types))
     assert fake.calls[0]["column_types"] == types and r["ai_inputs"]["column_types"] == "used"
     fake = FakeRL()
-    r, log = analyze_with(fake, (mask, "column_types", lambda m: {"orders.region_id": "number"}))
+    r, log = analyze_with(fake, (mask, "column_types", lambda m: {"orders.region_id": "number"}))   # a real name as a KEY
     assert fake.calls[0]["column_types"] is None and "column_types_dropped" in events(log)
 
 

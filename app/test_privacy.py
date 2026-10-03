@@ -8,12 +8,13 @@ swapped in to exercise the checks. Those tests say "fake LLM" in their name.
 """
 import json
 import tempfile
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 import pipeline
 from ai import rl
 from app import llm
+from app.test_support import C_CUSTOMER, FAST_MEASUREMENTS, T
 from db import queries
 from privacy import mask
 
@@ -135,11 +136,13 @@ def test_non_strict_mode_warns_but_the_llm_prompt_is_still_blocked():
 def test_leak_added_by_the_ai_side_is_blocked_at_the_llm():
     """The AI step itself puts a real value into its reason: prompt must be blocked."""
     def leaky_rl(masked_sql, masked_plan, cost_fn):
-        return [{"kind": "index", "action": "CREATE INDEX ON t_a3f (c_91b)", "cost_before": 100.0,
+        return [{"kind": "index", "action": f"CREATE INDEX ON {T} ({C_CUSTOMER})", "cost_before": 100.0,
                  "cost_after": 10.0, "reason": "Rows for Rahul Sharma are scanned."}]
-    with fresh_audit_log() as path, patched(rl, "recommend", leaky_rl):
+    with fresh_audit_log() as path, ExitStack() as stack:
+        for obj, name, value in [(rl, "recommend", leaky_rl), *FAST_MEASUREMENTS]:
+            stack.enter_context(patched(obj, name, value))
         r = pipeline.analyze(PASTED)
-        entry = llm.get_audit_log()[-1]
+        entry = [e for e in llm.get_audit_log() if e["event"] == "llm_call"][-1]
         print(f"      prompt_leak_ok={r['llm']['prompt_leak_ok']} source={r['llm']['source']} "
               f"pipeline leak_check={r['leak_check']}")
         print(f"      audit prompt  : {entry['prompt']}")

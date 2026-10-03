@@ -15,6 +15,7 @@ from streamlit.testing.v1 import AppTest
 import pipeline
 from app import llm, sample_data
 from app import ui_helpers as ui
+from app.test_support import AI_STAND_INS
 from app.test_privacy import fresh_audit_log, patched
 from privacy import mask
 
@@ -255,7 +256,8 @@ def test_page_has_no_real_name_anywhere_and_never_calls_the_decoder():
 def test_page_with_the_real_pipeline_stubs_end_to_end():
     with ExitStack() as stack:
         stack.enter_context(fresh_audit_log())
-        for obj, name, value in [(llm, "_call_ollama", _no_ollama), (llm, "start_warmup", lambda: None)]:
+        for obj, name, value in [(llm, "_call_ollama", _no_ollama), (llm, "start_warmup", lambda: None),
+                                 *AI_STAND_INS]:
             stack.enter_context(patched(obj, name, value))
         at = AppTest.from_file(DASHBOARD, default_timeout=30).run()
         at.chat_input[0].set_value(QUESTION).run()
