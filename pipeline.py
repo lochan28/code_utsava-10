@@ -457,6 +457,10 @@ def analyze(question):
             r["unsafe_rewrite"] = True
             r["warning"] = "UNSAFE REWRITE: returns different rows than the original. Do not deploy."
     recs.sort(key=lambda r: bool(r.get("unsafe_rewrite")))     # stable: only moves unsafe ones down
+    # The page's top pick (best evidence, never unsafe) goes FIRST, so the explanation, the result-level
+    # numbers (cost_*, time_*, improvement_pct) and deploy_sql all describe the same fix the page headlines.
+    top_pick = tradeoff.top_recommendation(recs)
+    recs.sort(key=lambda r: r is not top_pick)                 # stable: only moves the top pick up
     best = recs[0] if recs else {}
     masked_result = {"masked_query": masked_sql, "masked_plan": masked_plan,
                      "bitmask": bitmask, "bottleneck": bottleneck, "recommendations": recs}

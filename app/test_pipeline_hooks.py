@@ -317,6 +317,33 @@ def test_column_types_pass_through_when_the_masker_has_them_else_skip():
 
 
 # ---------------------------------------------------------------- 5) prompt wording
+def test_the_top_pick_comes_first_so_explanation_and_result_numbers_describe_it():
+    """A simulated index is listed first by the AI, but the measured rewrite is the page's top pick.
+    The prompt, recommendations[0], deploy_sql and the result-level numbers must all be about the rewrite."""
+    from app.test_support import AI_STAND_INS, C_REGION, T
+    from app.test_privacy import patched
+    index = f"CREATE INDEX ON {T} ({C_REGION})"
+    rewrite = f"SELECT count(*) FROM {T}"
+    recs = [{"kind": "index", "action": index, "cost_before": 100.0, "cost_after": 1.0, "reason": "simulated index"},
+            {"kind": "rewrite", "action": rewrite, "cost_before": 100.0, "cost_after": 120.0,
+             "verified_by": "timed_run", "improvement_pct": 79.1, "reason": "measured rewrite"}]
+    prompts = []
+
+    def ollama(prompt):
+        prompts.append(prompt)
+        return "ok", {}
+    stand_ins = [x for x in AI_STAND_INS if x[1] != "recommend"] + [(rl, "recommend", lambda *a, **k: [dict(r) for r in recs])]
+    with ExitStack() as stack:
+        stack.enter_context(fresh_audit_log())
+        for obj, name, value in [(llm, "_call_ollama", ollama), (llm, "start_warmup", lambda: None), *stand_ins]:
+            stack.enter_context(patched(obj, name, value))
+        r = pipeline.analyze("Why is the weekly sales report slow?")
+    assert [x["kind"] for x in r["recommendations"]] == ["rewrite", "index"]
+    assert r["deploy_scripts"][0] == r["deploy_sql"] and "count(*)" in r["deploy_sql"].lower()
+    assert r["cost_before"] == 100.0 and r["cost_after"] == 120.0 and r["improvement_pct"] == -20.0   # the TOP PICK's planner numbers
+    assert prompts and prompts[0].index(rewrite) < prompts[0].index(index), "the prompt lists the top pick first"
+
+
 def test_prompt_mentions_both_placeholder_styles():
     assert '"?"' not in llm.PROMPT_TEMPLATE
     prompt = llm.build_prompt({"masked_query": "SELECT c_1 FROM t_1 WHERE c_2 = $1", "masked_plan": {},
