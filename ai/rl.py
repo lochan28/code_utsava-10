@@ -319,10 +319,51 @@ def normalize_stats(stats):
     """Accept stats with eq_sel already filled in (P4) or with n_distinct (contract v2):
     eq_sel = 1 / n_distinct. Missing keys become empty instead of crashing."""
     out = {"rows": {}, "eq_sel": {}, "range_sel": {}, "existing_indexes": []}
-    out.update({k: v for k, v in stats.items() if v is not None})
+    out.update({k: (dict(v) if isinstance(v, dict) else list(v) if isinstance(v, list) else v)
+                for k, v in stats.items() if v is not None})          # copies: never edit the caller's dicts
     for key, n in stats.get("n_distinct", {}).items():
         out["eq_sel"].setdefault(key, 1.0 / max(1.0, n))
     return out
+
+
+def fill_range_sel(stats, info, masked_plan):
+    """CLAUDE.md fallback: for a range-filtered column MISSING from stats["range_sel"],
+    estimate it from the masked plan: (scan row estimate / table rows), with that table's
+    exact-match selectivities divided out. Values already given (Person 1) are never changed.
+    Returns the list of keys it filled (also stored in stats["range_sel_estimated"])."""
+    if not masked_plan or "Plan" not in masked_plan:
+        return []
+    scans = {}                                    # table -> estimated rows coming out of its scan
+
+    def walk(n, workers):
+        w = n.get("Workers Planned", workers)
+        rel = n.get("Relation Name")
+        if rel and "Scan" in n.get("Node Type", ""):
+            rows = n.get("Plan Rows", 0) * ((w + 1) if n.get("Parallel Aware") else 1)  # per-worker estimate
+            scans[rel] = max(scans.get(rel, 0), rows)
+        for k in n.get("Plans", []):
+            walk(k, w)
+
+    walk(masked_plan["Plan"], 0)
+    filled = []
+    by_table = {}
+    for key, v in info["columns"].items():
+        if "range_filter" in v["roles"] and key not in stats["range_sel"]:
+            by_table.setdefault(key.split(".", 1)[0], []).append(key)
+    for table, keys in by_table.items():
+        total = stats["rows"].get(table)
+        if not total or table not in scans:
+            continue
+        sel = scans[table] / total
+        for key, v in info["columns"].items():           # remove this table's exact-match filters
+            if key.startswith(table + ".") and "eq_filter" in v["roles"] and "or_filter" not in v["roles"]:
+                sel /= max(stats["eq_sel"].get(key, 1.0), 1e-12)
+        sel = min(1.0, max(sel, 1.0 / total)) ** (1.0 / len(keys))   # several range columns share it
+        for key in keys:
+            stats["range_sel"][key] = sel
+            filled.append(key)
+    stats["range_sel_estimated"] = filled
+    return filled
 
 
 def stats_from_plan(masked_plan):
@@ -439,6 +480,7 @@ def recommend(masked_sql, masked_plan, cost_fn, stats=None, time_fn=None, agent=
                  "improvement_pct": 0.0, "reward": None, "write_penalty": 0.0, "verified_by": "rule_only",
                  "novelty": NOVELTY_UNSEEN, "agent_score": None,
                  "reason": "The masked SQL could not be parsed, so no fix was analysed."}]
+    fill_range_sel(stats, info, masked_plan)        # contract fallback; no-op when P1 filled range_sel
     pairs = sqlinfo.join_pairs(masked_sql)
     s, ranked = agent.rank(masked_sql, stats, column_types)
     if not ranked:

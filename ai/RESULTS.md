@@ -1,140 +1,204 @@
 # ai/ results: evidence from REAL runs only
 
-All numbers below come from the real Postgres database (1M rows in the largest table, seed 42) through the same `ai/`
-code the pipeline uses. **No fake-world numbers are in this file.** Names in the tables are masked
-exactly as `ai/` sees them; one clearly labelled section near the end un-masks them for the reader.
+All numbers come from the real Postgres database (1M rows in the largest table, seed 42) through
+the same `ai/` code the pipeline uses, with Person 1's sandbox (`cost()` incl. simulated monthly
+partitions, `table_stats()`, `checked_run()`, `measure_write_latency()`). **No fake-world numbers.**
+Names are masked as `ai/` sees them; one labelled section un-masks them for the reader.
 
-**How to re-run.** Each section names its command. `p3_evidence.py` un-masks queries (it plays the
-pipeline's role), so it must live **outside** `ai/`. Today it is in Person 3's scratchpad together
-with `p3_write.py`; moving both into the repo (outside `ai/`) is a lead decision. Each command
-re-records its section in `evidence.json`; `python p3_evidence.py all` re-runs everything and
-regenerates this file. Timings vary a little between runs; costs and same-results checks do not.
+**Re-run:** each section names its command. `p3_evidence.py` / `p3_write.py` / `workload_rl.py` un-mask
+queries (they play the pipeline's role), so they live **outside** `ai/` (Person 3's scratchpad today;
+moving them into the repo outside `ai/` is a lead decision). `python p3_evidence.py all` re-runs every
+section and regenerates this file. **Partition costs and write latency vary between runs** (section 6);
+they are reported as observed ranges, headlined at the conservative end.
 
-## 1. Rewrites: judged by real time + same results
-Command: `python p3_evidence.py rewrites` (1 warm-up + median of 5 timed runs each, read-only connection;
-same results = equal row count AND equal order-independent checksum of all rows).
+## 0. Headline: measured time of the recommended fixes (requirement 6)
+Command: `python p3_evidence.py timing`. Original vs the top recommended fix, Person 1 `checked_run()` on the **sandbox
+copies only** (index built inside a rolled-back transaction; partition = the partitioned copy).
+3 runs each (each run is itself a median of P1's repeats); median shown, range in brackets.
+
+| Query | Fix (masked) | Before ms | After ms | Speedup | **Measured drop** | Planner estimate | Same results | Agree? |
+|---|---|---:|---:|---:|---:|---:|---|---|
+| q11 | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 43.4 (37.7-48.4) | 17.9 (14.9-19.2) | 2.4x | **58.9%** | 92.1% | yes | **NO** |
+| q03 | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 35.2 (33.4-37.8) | 1.7 (1.5-2.0) | 20.2x | **95.1%** | 96.0% | yes | yes |
+| q01 | `CREATE INDEX ON t_1c1 (c_1e3)` | 32.5 (31.6-33.5) | 1.1 (0.6-1.1) | 30.4x | **96.7%** | 82.7% | yes | yes |
+| q02 | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 46.3 (44.9-47.2) | 17.7 (14.5-26.3) | 2.6x | **61.8%** | 91.9% | yes | **NO** |
+| q06 | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 41.5 (39.4-45.2) | 18.4 (9.6-20.3) | 2.3x | **55.7%** | 83.8% | yes | **NO** |
+| q08 | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 61.5 (58.6-62.0) | 31.7 (30.5-34.0) | 1.9x | **48.5%** | 47.4% | yes | yes |
+
+**5 of 6 winners are more than 50% faster in measured time**, all with identical results.
+Disagreements: for partitions the planner **overestimates** the gain (e.g. q11 planner ~92% vs measured
+~59%), most likely because skipping partitions saves less real time than the cost model assumes (not verified).
+Treat the planner numbers in sections 2 and 4 as a ranking signal; this table is the real effect.
+
+## 1. Rewrites: real time + same results (Person 1 `checked_run()`)
+Command: `python p3_evidence.py rewrites`. Same results = equal row count AND equal checksum of all rows.
 
 | Query | Rule | Original ms | Rewritten ms | Speedup | Same results | Planner cost before -> after |
 |---|---|---:|---:|---:|---|---|
-| q04 | `correlated_subquery_to_join` | 2,204.0 | 216.8 | **10.2x** | yes | 1,369,978 -> 22,263 |
-| q07 | `not_in_to_not_exists` | 362.1 | 161.8 | **2.2x** | yes | 23,329 -> 28,709 |
-| q05 | `function_to_range` | 60.7 | 24.9 | **2.4x** | yes | 17,898 -> 16,904 |
+| q04 | `correlated_subquery_to_join` | 2,905.7 | 641.5 | **4.5x** | yes | 1,369,978 -> 22,263 |
+| q07 | `not_in_to_not_exists` | 359.6 | 174.3 | **2.1x** | yes | 23,329 -> 28,709 |
+| q05 | `function_to_range` | 53.8 | 17.8 | **3.0x** | yes | 17,898 -> 16,904 |
 
-Note q07: the planner **estimated the rewrite 23% more expensive**, but it measured **2.2x faster**. That is why rewrites are judged by real time.
+q07: the planner **estimated the rewrite 23% more expensive**, but it measured **2.1x faster**, so rewrites are judged by real time.
 
-## 2. Indexes: HypoPG cost (no real index is ever created)
-Command: `python p3_evidence.py indexes` (`rl.recommend()` with the saved agent `ai/rl_agent.json`, real `cost_fn`
-= Person 1's `sandbox.cost()` on a read-only connection with HypoPG, masked real table stats).
-Top recommendation per query.
+## 2. Indexes and partitions (top fix per query)
+Command: `python p3_evidence.py indexes`. `rl.recommend()` with `ai/rl_agent.json`, real `cost_fn` (HypoPG for indexes,
+partitioned sandbox copy for `PARTITION ... MONTHLY`), masked `table_stats()`, and `write_fn` =
+Person 1 `measure_write_latency()` for the final index fix. Drop / write cost = observed range (section 6).
 
-| Query | Split | Top fix (masked) | Cost before -> after | Drop | Write penalty | verified_by | Novelty |
-|---|---|---|---|---:|---:|---|---|
-| q11 | held-out | `CREATE INDEX ON t_1c1 (c_0b8, c_02b)` | 19,442 -> 9,430 | 51.5% | 0.06 | `hypopg_cost` | unseen shape (lower confidence) |
-| q03 | held-out | `CREATE INDEX ON t_1c1 (c_073, c_02b)` | 16,923 -> 2,390 | 85.9% | 0.06 | `hypopg_cost` | unseen shape (lower confidence) |
-| q01 | train | `CREATE INDEX ON t_1c1 (c_1e3)` | 15,908 -> 2,744 | 82.7% | 0.03 | `hypopg_cost` | seen query shape |
-| q02 | train | `CREATE INDEX ON t_1c1 (c_02b)` | 18,745 -> 12,744 | 32.0% | 0.03 | `hypopg_cost` | seen query shape |
-| q06 | held-out | `CREATE INDEX ON t_0a3 (c_edb)` | 16,051 -> 16,035 | 0.1% | 0.03 | `hypopg_cost` | unseen shape (lower confidence) |
-| q09 | train | `CREATE INDEX ON t_1c1 (c_1e3); CREATE INDEX ON t_1c1 (c_c3a)` | 16,879 -> 1,133 | 93.3% | 0.06 | `hypopg_cost` | seen query shape |
-| q10 | train | `CREATE INDEX ON t_1c1 (c_c3a)` | 16,873 -> 1,022 | 93.9% | 0.03 | `hypopg_cost` | seen query shape |
-| q08 | train | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 18,582 -> 18,582 | 0.0% | 0.03 | `rule_only` | seen query shape |
+| Query | Split | Top fix (masked) | Cost drop (range) | Measured write cost (range, insert time) | verified_by | Novelty |
+|---|---|---|---:|---:|---|---|
+| q11 | held-out | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 66.8% to 92.2% | not measured (partition) | `hypopg_cost` | unseen shape (lower confidence) |
+| q03 | held-out | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 96.0% | not measured (partition) | `hypopg_cost` | seen query shape |
+| q01 | train | `CREATE INDEX ON t_1c1 (c_1e3)` | 82.7% | +129% to +215% | `hypopg_cost` | seen query shape |
+| q02 | train | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 73.2% to 92.0% | not measured (partition) | `hypopg_cost` | unseen shape (lower confidence) |
+| q06 | held-out | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 83.8% | not measured (partition) | `hypopg_cost` | seen query shape |
+| q09 | train | `CREATE INDEX ON t_1c1 (c_1e3); CREATE INDEX ON t_1c1 (c_c3a)` | 93.3% | +105% to +340% | `hypopg_cost` | seen query shape |
+| q10 | train | `CREATE INDEX ON t_1c1 (c_c3a)` | 93.9% | +2% to +203% | `hypopg_cost` | unseen shape (lower confidence) |
+| q08 | train | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 47.4% | not measured (partition) | `hypopg_cost` | seen query shape |
 
-q11 (the problem statement's example), `summary`: _Add composite index on t_1c1 (c_0b8, c_02b) (52% lower estimated cost in the HypoPG sandbox, +2 index columns to maintain on writes, write penalty 0.06). Zero raw data exposed to the AI (masked metadata only)._
+q11 (the problem statement's example), `summary` (latest run): _Partition t_1c1 by c_02b (92% lower estimated cost on a partitioned sandbox copy; write cost not measured). Zero raw data exposed to the AI (masked metadata only)._
 
-q11, `why_not`: _Index on t_1c1(c_0b8) rejected: c_0b8 has only about 10 distinct values (10% of rows per value), so the planner would still read much of the table (simulated cost drop 16% vs 52% for the chosen fix)._
+q11, `why_not`: _Index on t_1c1(c_0b8, c_02b) not chosen: it cuts the simulated cost by only 51% vs 92% for the chosen fix._
+
+q01, `summary` with a measured write cost (latest run): _Add index on t_1c1 (c_1e3) (83% lower estimated cost in the HypoPG sandbox, +0.00229 ms per inserted row, measured on the sandbox copy (+129% insert time)). Zero raw data exposed to the AI (masked metadata only)._
 
 ## 3. Bottleneck detection on the 11 real plans
-Command: `python p3_evidence.py bottleneck` (`EXPLAIN (ANALYZE, FORMAT JSON)`, masked: allow-listed fields, hashed names).
-Label = the step with the highest **measured** self time: actual time x loops minus children
-(strict; none of the four methods sees these timings). Raw GNN / gated hybrid use the local
-`ai/gnn_weights.pt` (synthetic training: `python -m ai.gnn`, seed 11; validated = False).
+Command: `python p3_evidence.py bottleneck`. `EXPLAIN (ANALYZE, FORMAT JSON)`, masked. Label = step with the highest
+**measured** self time (actual time x loops minus children); none of the methods sees these timings.
+Raw GNN / gated hybrid use the local `ai/gnn_weights.pt` (validated = False).
 
 | Query | Measured label (masked) | baseline | rules | raw GNN | gated hybrid |
 |---|---|---|---|---|---|
 | q01 | Seq Scan t_1c1 | OK Seq Scan t_1c1 (93%) | OK Seq Scan t_1c1 (93%) | OK Seq Scan t_1c1 (93%) | OK Seq Scan t_1c1 (93%) |
-| q02 | Seq Scan t_1c1 | OK Seq Scan t_1c1 (85%) | OK Seq Scan t_1c1 (85%) | MISS Seq Scan t_21e (6%) | OK Seq Scan t_1c1 (85%) |
+| q02 | Seq Scan t_21e | MISS Seq Scan t_1c1 (85%) | MISS Seq Scan t_1c1 (85%) | OK Seq Scan t_21e (6%) | MISS Seq Scan t_1c1 (85%) |
 | q03 | Seq Scan t_1c1 | OK Seq Scan t_1c1 (94%) | OK Seq Scan t_1c1 (94%) | OK Seq Scan t_1c1 (94%) | OK Seq Scan t_1c1 (94%) |
 | q04 | Seq Scan t_1c1 | MISS Index Scan t_21e (0%) | OK Seq Scan t_1c1 (100%) | MISS Index Scan t_21e (0%) | MISS Index Scan t_21e (0%) |
 | q05 | Seq Scan t_1c1 | OK Seq Scan t_1c1 (94%) | OK Seq Scan t_1c1 (94%) | OK Seq Scan t_1c1 (94%) | OK Seq Scan t_1c1 (94%) |
-| q06 | Seq Scan t_1c1 | OK Seq Scan t_1c1 (92%) | OK Seq Scan t_1c1 (92%) | OK Seq Scan t_1c1 (92%) | OK Seq Scan t_1c1 (92%) |
+| q06 (1) | Seq Scan t_1c1 | OK Seq Scan t_1c1 (92%) | OK Seq Scan t_1c1 (92%) | OK Seq Scan t_1c1 (92%) | OK Seq Scan t_1c1 (92%) |
 | q07 (2) | Seq Scan t_21e | MISS Seq Scan t_1c1 (100%) | MISS Seq Scan t_1c1 (100%) | MISS Seq Scan t_1c1 (100%) | MISS Seq Scan t_1c1 (100%) |
 | q08 | Seq Scan t_1c1 | OK Seq Scan t_1c1 (89%) | OK Seq Scan t_1c1 (89%) | OK Seq Scan t_1c1 (89%) | OK Seq Scan t_1c1 (89%) |
 | q09 (1) | Seq Scan t_1c1 | OK Seq Scan t_1c1 (94%) | OK Seq Scan t_1c1 (94%) | OK Seq Scan t_1c1 (94%) | OK Seq Scan t_1c1 (94%) |
 | q10 (1) | Seq Scan t_1c1 | OK Seq Scan t_1c1 (94%) | OK Seq Scan t_1c1 (94%) | OK Seq Scan t_1c1 (94%) | OK Seq Scan t_1c1 (94%) |
 | q11 | Seq Scan t_1c1 | OK Seq Scan t_1c1 (82%) | OK Seq Scan t_1c1 (82%) | OK Seq Scan t_1c1 (82%) | OK Seq Scan t_1c1 (82%) |
 
-**Headline (strict measured labels):** baseline **9/11**, rules **10/11**, raw GNN **8/11**, gated hybrid **9/11**.
+**Headline (strict measured labels, this run):** baseline **8/11**, rules **9/11**, raw GNN **9/11**, gated hybrid **8/11**.
 
-(1) The parallel formula (time x loops adds the workers together) decides the label here; counting
-workers once would label the Gather step above it. The agreed formula was kept. Which queries get
-this flag varies with timing noise (q06 was flagged in an earlier run).
+(1) Parallel plan: time x loops adds the workers together and decides the label; counting workers once
+would pick the step above. The agreed formula was kept. Flags and some labels change between runs
+(e.g. q02 and q11's measured label moved between runs today), so treat this table as noisy.
 
-(2) q07: Postgres books the time of building the hashed `NOT IN` list (from the subquery's scan) to
-the parent scan, so the strict label is the parent scan and every method misses it. Labelling q07 as
-the subquery's scan instead gives: baseline 10/11, rules 11/11, raw GNN 9/11, gated hybrid 10/11.
+(2) q07: Postgres books the hashed `NOT IN` list's time to the parent scan, so the strict label is the
+parent and every method misses it. With q07 labelled as the subquery's scan: baseline 9/11, rules 10/11, raw GNN 10/11, gated hybrid 9/11.
 
-Earlier GNN test on 101 real plan variants with measured labels (scratch harness `real_label_gnn.py`):
-split A (held out q03/q06/q11) all four methods 30/30; split B (held out q04/q07/q11) rules 20/21,
-baseline 10/21, gated hybrid 10/21, raw GNN 0/21.
+## 4. Generalization: queries the agent never trained on
+### 4a. Person 1's workload: 4 held-out templates, 100 queries
+Command: `python workload_rl.py` (train + evaluate) or `--eval-only` (evaluate the saved agent).
+Agent trained on 100 workload queries (templates t01-t08); tested on templates t09-t12 (25 queries each),
+all masked. Reward = cost drop minus 0.03 per index column; a partition the sandbox refuses = no gain.
 
-## 4. Generalization: queries the agent never trained on (real costs)
-Command: `python p3_evidence.py generalization` (agent `ai/rl_agent.json`, trained on q01, q02, q04, q05, q07, q08,
-q09, q10; held out q03, q06, q11). Partitions not offered (cannot be simulated yet), so the comparison
-is like-for-like. Reward = cost drop minus 0.03 per index column.
-
-| Method | q03 drop | q06 drop | q11 drop | Avg drop | Avg write penalty | Avg reward |
+| Template | RL alone | RL + top-3 verify | random | index-everything | best possible | cost_fn calls (verify / best) |
 |---|---:|---:|---:|---:|---:|---:|
-| RL alone | 39.1% | 0.0% | 15.9% | 18.3% | 0.030 | 0.153 |
-| RL + top-3 verify | 85.9% | 0.1% | 51.5% | 45.8% | 0.050 | **0.408** |
-| random | 50.4% | 5.4% | 14.4% | 23.4% | 0.040 | 0.194 |
-| index-everything | 74.6% | 21.7% | 36.8% | 44.4% | 0.090 | 0.354 |
-| best possible | 85.9% | 21.6% | 51.5% | 53.0% | 0.050 | 0.480 |
+| t09 | 0.930 (96%) | **0.930 (96%)** | 0.930 (96%) | 0.930 (96%) | 0.930 (96%) | 2 / 2.0 |
+| t10 | 0.831 (87%) | **0.887 (94%)** | 0.525 (57%) | 0.577 (67%) | 0.910 (98%) | 4 / 9.0 |
+| t11 | 0.859 (89%) | **0.888 (92%)** | 0.623 (66%) | 0.540 (60%) | 0.907 (95%) | 4 / 5.0 |
+| t12 | 0.816 (85%) | **0.816 (85%)** | 0.131 (17%) | 0.206 (33%) | 0.816 (85%) | 4 / 8.0 |
+| ALL | 0.859 (89%) | **0.880 (92%)** | 0.552 (59%) | 0.563 (64%) | 0.891 (94%) | 4 / 6.0 |
 
-RL + top-3 verify costs 4 `cost_fn` calls per query (baseline + 3 fixes); best possible tries every candidate.
+Novelty on the 100 held-out queries: **50 unseen shape**, 50 seen shape (t09 and t11 match shapes met in training).
+t09 (`col IN ($1, $2, $3)`) had **no candidates** until a parser coverage fix (IN-list = exact-match
+filter); before the fix only 75 queries could be scored. No training query has an IN-list, so the
+agent was not retrained. t09 has one sensible candidate, so every method scores the same there.
+t12 moved between runs (best possible 0.817 -> 0.631 with the SAME agent) because its winning partition
+cost changes when the sandbox's partitioned copy is rebuilt (section 6).
 
-## 5. Limits: read before quoting any number
-- **Partitioning is not simulated.** The `cost()` on master accepts `CREATE INDEX` only, so partition
-  suggestions are `verified_by: rule_only` and carry no number (q08's likely fix is invisible).
-- **Planner cost misjudges rewrites** (q07: estimated worse, measured faster). We handle it by judging
-  rewrites only by real time on the original vs the rewritten query **plus** a same-results check
-  (row count + checksum, or the pipeline's `results_match`); without that they stay `rule_only`.
-- **The agent trained on only 8 real queries** (18 distinct simulations). Its blind pick on held-out
-  queries is no better than random (0.153 vs 0.194); the top-3 verification is what makes it work.
-- **The GNN does not beat the rules on real plans** (section 3), so the shipped default is `rules`.
-  Real training data is very skewed (most bottlenecks are the same big scan).
-- **The rules and the labelling ideas were written by the same team.** Treat the rules score as
-  indicative, not as an independent benchmark. The strict labels come from measured time, which no
-  method sees, but the dataset is our own 11 queries.
-- **Index gains are planner-cost estimates** (HypoPG), not measured time. q06 has no single index
-  that helps much (best possible 21.6%).
-- Small synthetic dataset (1M rows in the largest table, one machine). Timings vary between runs.
+### 4b. The 3 held-out slow queries (q03, q06, q11)
+Command: `python p3_evidence.py generalization`.
 
-## 6. Un-masked for the reader
+| Method | q03 drop | q06 drop | q11 drop | Avg reward |
+|---|---:|---:|---:|---:|
+| RL alone | 96.0% | 83.8% | 92.1% | 0.876 |
+| RL + top-3 verify | 96.0% | 83.8% | 92.1% | 0.876 |
+| random | 61.8% | 21.1% | 24.1% | 0.318 |
+| index-everything | 74.6% | 21.7% | 36.8% | 0.354 |
+| best possible | 96.0% | 83.8% | 92.1% | 0.876 |
+
+## 5. Before / after Person 1's sandbox
+Before = `RESULTS.md` at commit `eac48d7` (indexes only, no partitions, agent trained on 8 queries).
+
+| Item | Before | After |
+|---|---|---|
+| q11 top fix | index, 51.5% (`hypopg_cost`) | partition, 66.8% to 92.2% (`hypopg_cost`) |
+| q03 top fix | index, 85.9% (`hypopg_cost`) | partition, 96.0% (`hypopg_cost`) |
+| q02 top fix | index, 32.0% (`hypopg_cost`) | partition, 73.2% to 92.0% (`hypopg_cost`) |
+| q06 top fix | index, 0.1% (`hypopg_cost`) | partition, 83.8% (`hypopg_cost`) |
+| q08 top fix | partition, 0.0% (`rule_only`) | partition, 47.4% (`hypopg_cost`) |
+| q04 rewrite speedup | 10.2x (own timer) | 4.5x (`checked_run`) |
+| q07 rewrite speedup | 2.2x (own timer) | 2.1x (`checked_run`) |
+| q05 rewrite speedup | 2.4x (own timer) | 3.0x (`checked_run`) |
+| q03/q06/q11 avg reward, RL + top-3 verify | 0.408 | 0.876 |
+| q03/q06/q11 avg reward, RL alone | 0.153 | 0.876 |
+| Agent training data | 8 real queries, 18 simulations | 100 workload queries, 277 simulations |
+| Unseen-template test | none | 100 queries, 4 templates (section 4a) |
+| Write cost in summary | width estimate ("estimated") | measured per inserted row (indexes) |
+| Stats | read by Person 3's harness | Person 1 `table_stats()` |
+
+## 6. Run-to-run variance (why some numbers are ranges)
+Observed today (earlier runs + every fresh run of section 2):
+
+| Number | Observed values | Conservative headline |
+|---|---|---|
+| q11 partition cost drop | 73.9%, 73.9%, 73.9%, 92.1%, 92.2%, 84.6%, 92.2%, 66.8%, 91.2% | **66.8%** |
+| q02 partition cost drop | 73.2%, 73.2%, 73.2%, 91.9%, 92.0%, 92.0%, 92.0% | **73.2%** |
+| q10 index write cost (insert time) | +203%, +97%, +53%, +123%, +58%, +73%, +120%, +2%, +66% | **+203%** |
+| q01 index write cost (insert time) | +161%, +156%, +215%, +129%, +210%, +180%, +129% | **+215%** |
+| q09 index write cost (insert time) | +340%, +188%, +177%, +105%, +212%, +231% | **+340%** |
+
+Why: each time the sandbox's partitioned copy is rebuilt (teammates / `generate.py` drop stale copies),
+Person 1's code runs `ANALYZE`, which **samples rows at random**, so the planner's statistics and cost
+estimates change slightly; q11 moves between about -67% and -92%. Within one build the cost is stable.
+Write latency is a real timing of small insert batches on a shared machine, so it is noisy too.
+Index costs (HypoPG) did not vary.
+
+## 7. Limits: read before quoting any number
+- **Planner estimates vs measured time:** sections 2 and 4 use planner costs (HypoPG / partitioned
+  copy). Section 0 measures the winners: partition gains are overestimated by the planner (q11, q02,
+  q06), index gains were underestimated (q01). Quote section 0 for real speedups.
+- **Run-to-run variance** in partition costs and write latency (section 6); quote the conservative end.
+- **MONTHLY only (contract):** partitions are proposed and simulated as `PARTITION ... MONTHLY` only.
+- `range_sel` comes from Person 1's `table_stats()`; the contract fallback (estimate from the masked
+  plan) exists in `ai/rl.py` but never fired here: P1 covered 6/6 range columns of the slow queries
+  and 138/138 in the workload.
+- **The GNN does not beat the rules on real plans** (section 3: tie or loss in every test, 0/22 vs
+  22/22 on repeated-scan plans in a 301-plan test); the shipped default is `rules`.
+- Rewrite speedups also vary between runs (e.g. q04 4.5x to 10.2x today); same results every time.
+- **The rules and the labelling ideas were written by the same team**: treat the rules score as
+  indicative, not an independent benchmark; the dataset is our own 11 queries + generated workload.
+- Planner cost misjudges rewrites (section 1): rewrites are accepted only with real timing + same results.
+- One evidence run failed once while a teammate used the shared sandbox at the same time (lock / timeout).
+- Small synthetic dataset (1M rows in the largest table, one machine).
+
+## 8. Un-masked for the reader
 **This is the only section with real names.** `ai/` itself never sees them; the pipeline translates.
 
 | Masked | Real |
 |---|---|
 | `c_02b` | `order_date` |
-| `c_03e` | `segment` |
 | `c_073` | `status` |
 | `c_0b8` | `region_id` |
 | `c_1e3` | `customer_id` |
-| `c_822` | `email` |
-| `c_82a` | `name` |
 | `c_c3a` | `product_id` |
-| `c_cf3` | `amount` |
-| `c_edb` | `category` |
-| `t_0a3` | `products` |
 | `t_1c1` | `orders` |
 | `t_21e` | `customers` |
 
-## 7. Leak check of the whole ai/ folder
-Command: `python p3_write.py` (scans after writing this file). Searched: the 4 sales table names
-and their distinctive column names, plus 3 column names that are everyday words (name, status,
-category), reported separately. The words are not repeated below, so the list does not leak itself.
+## 9. Leak check of the whole ai/ folder
+Command: `python p3_write.py`. Searched: the 4 sales table names and their distinctive column names,
+plus 3 column names that are everyday words (name, status, category), reported separately. Words are
+not repeated below, so the list does not leak itself.
 
-Files scanned: .gitignore, __init__.py, candidates.py, demo.py, demo_q11_recorded.json, fake_env.py, fixtures.py, gnn.py, plan_gen.py, README.md, RESULTS.md, rewrite.py, rl.py, rl_agent.json, sqlinfo.py, verify.py, why_not.py (not `gnn_weights.pt`, it is not in git).
+Files scanned: .gitignore, __init__.py, candidates.py, demo.py, demo_q11_recorded.json, fake_env.py, fixtures.py, gnn.py, plan_gen.py, README.md, RESULTS.md, rewrite.py, rl.py, rl_agent.json, sqlinfo.py, test_range_sel.py, verify.py, why_not.py (not `gnn_weights.pt`, it is not in git).
 
-- Sales-name hits in code, fixtures and `rl_agent.json`: **0**
+- Sales-name hits in code, fixtures, `rl_agent.json` and demo files: **0**
 - Sales-name hits outside the un-masked section: **0**
 
 Every hit:
@@ -174,20 +238,14 @@ Every hit:
 | plan_gen.py | 216 | everyday word | everyday-word use |
 | README.md | 26 | everyday word | everyday-word use |
 | README.md | 35 | everyday word | everyday-word use |
-| README.md | 133 | everyday word | everyday-word use |
-| RESULTS.md | 116 | sales name | un-masked section (allowed) |
-| RESULTS.md | 117 | sales name | un-masked section (allowed) |
-| RESULTS.md | 118 | everyday word | un-masked section (allowed) |
-| RESULTS.md | 119 | sales name | un-masked section (allowed) |
-| RESULTS.md | 120 | sales name | un-masked section (allowed) |
-| RESULTS.md | 121 | sales name | un-masked section (allowed) |
-| RESULTS.md | 122 | everyday word | un-masked section (allowed) |
-| RESULTS.md | 123 | sales name | un-masked section (allowed) |
-| RESULTS.md | 124 | sales name | un-masked section (allowed) |
-| RESULTS.md | 125 | everyday word | un-masked section (allowed) |
-| RESULTS.md | 126 | sales name | un-masked section (allowed) |
-| RESULTS.md | 127 | sales name | un-masked section (allowed) |
-| RESULTS.md | 128 | sales name | un-masked section (allowed) |
+| README.md | 137 | everyday word | everyday-word use |
+| RESULTS.md | 186 | sales name | un-masked section (allowed) |
+| RESULTS.md | 187 | everyday word | un-masked section (allowed) |
+| RESULTS.md | 188 | sales name | un-masked section (allowed) |
+| RESULTS.md | 189 | sales name | un-masked section (allowed) |
+| RESULTS.md | 190 | sales name | un-masked section (allowed) |
+| RESULTS.md | 191 | sales name | un-masked section (allowed) |
+| RESULTS.md | 192 | sales name | un-masked section (allowed) |
 | rewrite.py | 42 | everyday word | everyday-word use |
 | rewrite.py | 138 | everyday word | everyday-word use |
 | rewrite.py | 144 | everyday word | everyday-word use |
@@ -195,19 +253,21 @@ Every hit:
 | rewrite.py | 180 | everyday word | everyday-word use |
 | rl.py | 119 | everyday word | everyday-word use |
 | rl.py | 123 | everyday word | everyday-word use |
-| rl.py | 335 | everyday word | everyday-word use |
-| rl.py | 518 | everyday word | everyday-word use |
-| rl.py | 520 | everyday word | everyday-word use |
-| rl.py | 523 | everyday word | everyday-word use |
-| rl.py | 525 | everyday word | everyday-word use |
+| rl.py | 340 | everyday word | everyday-word use |
+| rl.py | 376 | everyday word | everyday-word use |
+| rl.py | 597 | everyday word | everyday-word use |
+| rl.py | 599 | everyday word | everyday-word use |
+| rl.py | 602 | everyday word | everyday-word use |
+| rl.py | 604 | everyday word | everyday-word use |
 | sqlinfo.py | 4 | everyday word | everyday-word use |
 | sqlinfo.py | 40 | everyday word | everyday-word use |
 | sqlinfo.py | 44 | everyday word | everyday-word use |
 | sqlinfo.py | 49 | everyday word | everyday-word use |
-| sqlinfo.py | 134 | everyday word | everyday-word use |
-| sqlinfo.py | 135 | everyday word | everyday-word use |
-| sqlinfo.py | 137 | everyday word | everyday-word use |
-| sqlinfo.py | 138 | everyday word | everyday-word use |
+| sqlinfo.py | 139 | everyday word | everyday-word use |
 | sqlinfo.py | 140 | everyday word | everyday-word use |
-| sqlinfo.py | 173 | everyday word | everyday-word use |
-| sqlinfo.py | 179 | everyday word | everyday-word use |
+| sqlinfo.py | 142 | everyday word | everyday-word use |
+| sqlinfo.py | 143 | everyday word | everyday-word use |
+| sqlinfo.py | 145 | everyday word | everyday-word use |
+| sqlinfo.py | 178 | everyday word | everyday-word use |
+| sqlinfo.py | 184 | everyday word | everyday-word use |
+| test_range_sel.py | 9 | everyday word | everyday-word use |

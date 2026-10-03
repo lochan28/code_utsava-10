@@ -37,17 +37,35 @@ def recorded_cost_fn(rec):
     return cost_fn
 
 
-def run(cost_fn=None, time_fn=None, stats=None, out=print):
+def recorded_fn(calls):
+    """Replay recorded time_fn / write_fn results by their masked SQL (same input -> same dict)."""
+    table = {c["sql"]: c["result"] for c in calls}
+
+    def fn(masked_sql, **_):
+        if masked_sql not in table:
+            raise KeyError("not in the recording - run live, or re-record with p3_record_demo.py")
+        return table[masked_sql]
+    return fn
+
+
+def run(cost_fn=None, time_fn=None, stats=None, write_fn=None, out=print):
+    """Default (no functions passed) = RECORDED mode. Pass cost_fn (+ time_fn, write_fn, stats)
+    from the pipeline for LIVE mode."""
     rec = json.loads(RECORDED.read_text(encoding="utf-8"))
     live = cost_fn is not None
     cost_fn = cost_fn or recorded_cost_fn(rec)
+    if not live:
+        time_fn = time_fn or recorded_fn(rec.get("time_calls", []))
+        write_fn = write_fn or recorded_fn(rec.get("write_calls", []))
     stats = stats or {k: (v if k != "existing_indexes" else [(t, tuple(c)) for t, c in v])
                       for k, v in rec["stats"].items()}
-    source = "LIVE (pipeline cost_fn)" if live else f"RECORDED real run {rec['recorded_at']} ({rec['source']})"
+    source = "LIVE (pipeline cost_fn)" if live else f"RECORDED real run, recorded at {rec['recorded_at']}"
 
     out("=" * 78)
     out(f"QUESTION   {rec['question']}   ->  matched query {rec['query_id']}")
     out(f"DB NUMBERS {source}")
+    if not live:
+        out(f"           source: {rec['source']}; agent: {rec.get('agent', 'ai/rl_agent.json')}")
     out(f"MASKED SQL {rec['masked_sql'][:150]}...")
     out("-" * 78)
 
@@ -56,7 +74,8 @@ def run(cost_fn=None, time_fn=None, stats=None, out=print):
     out(f"           {b['reason']}")
     out("-" * 78)
 
-    recs = rl.recommend(rec["masked_sql"], rec["masked_plan"], cost_fn, stats=stats, time_fn=time_fn)
+    recs = rl.recommend(rec["masked_sql"], rec["masked_plan"], cost_fn, stats=stats, time_fn=time_fn,
+                        write_fn=write_fn)
     top = recs[0]
     tag = "" if live else "   [recorded]"
     out(f"TOP FIX    {top['action']}")
@@ -64,10 +83,18 @@ def run(cost_fn=None, time_fn=None, stats=None, out=print):
         f"({top['improvement_pct']}% lower){tag}")
     out(f"VERIFIED   {top['verified_by']}{tag}")
     out(f"NOVELTY    {top['novelty']}")
+    wl_rec = next((r for r in recs if r.get("write_latency")), None)
+    if wl_rec:
+        wl = wl_rec["write_latency"]
+        if wl.get("source") == "measured":
+            out(f"WRITES     index alternative {wl_rec['action']}: +{wl['delta_ms_per_row']:.3g} ms per inserted "
+                f"row ({wl['pct']:+.0f}% insert time), measured{tag}")
+        else:
+            out(f"WRITES     {wl_rec['action']}: {wl['source']} ({wl.get('note', '')})")
     out(f"WHY NOT    {top.get('why_not', '-')}")
     out(f"SUMMARY    {top['summary']}")
     out("=" * 78)
-    out("Names are masked: the pipeline un-masks them for the admin (see ai/RESULTS.md section 6).")
+    out("Names are masked: the pipeline un-masks them for the admin (see ai/RESULTS.md section 8).")
     return {"bottleneck": b, "recommendations": recs, "live": live}
 
 

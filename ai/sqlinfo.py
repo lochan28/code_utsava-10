@@ -69,6 +69,11 @@ def _filter_role(col, stop):
             if parent.args.get("query") is not None and node is parent.this:
                 roles.add("not_in" if is_not else "in_subquery")
                 return roles
+            if parent.expressions and node is parent.this:
+                # col IN ($1, $2, ...): a short list of exact values -> exact-match filter
+                # (an index finds each value directly). NOT IN (...) stays "other".
+                roles.add("other_filter" if is_not else "eq_filter")
+                return roles
         if isinstance(parent, (exp.EQ, exp.NEQ, exp.Like, exp.ILike) + RANGE_OPS):
             other = [c for c in parent.args.values() if isinstance(c, exp.Expression) and c is not node]
             other_is_column = any(isinstance(o, exp.Column) for o in other)
