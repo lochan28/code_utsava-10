@@ -389,6 +389,9 @@ def stats_from_plan(masked_plan):
 
 
 def _fix_phrase(r):
+    if r.get("rewrite_sql"):                      # structural fix + query rewrite, timed together
+        return (_fix_phrase({**r, "rewrite_sql": None}) + " and rewrite the query ("
+                + (r.get("rewrite_rule") or "same-result rewrite") + ")")
     if r["kind"] == "rewrite":
         return "rewrite the query (" + r.get("rule_label", "same-result rewrite") + ")"
     if r["kind"] == "partition":
@@ -420,6 +423,8 @@ def bundle_summary(recs):
                       and r["verified_by"] != "rule_only" and r["improvement_pct"] > 0), None)
     rewrite_fix = next((r for r in recs if r["kind"] == "rewrite" and r["verified_by"] == "timed_run"
                         and r.get("same_results")), None)
+    if index_fix and index_fix.get("rewrite_sql"):   # already counted inside the timed fix + rewrite
+        rewrite_fix = None
     suggested = [r for r in recs if r["verified_by"] == "rule_only" and r["kind"] != "none"]
     parts = []
     if index_fix:
@@ -482,7 +487,33 @@ def _measured_gain(r):
     return None
 
 
-def _time_winner(recs, masked_sql, time_fn, cost_fn=None, runs=TIME_WINNER_RUNS):
+def _with_rewrite(fix, rw, before, med_b, time_fn, cost_fn, runs):
+    """Time the rewritten query ON the structural fix (e.g. partition + index + join rewrite).
+    Returns a new rec (a copy of fix plus rewrite_sql), or None if it fails or changes results."""
+    actions = fix["action"].split("; ")
+    try:
+        after = [time_fn(rw["action"], actions=actions) for _ in range(runs)]
+    except ValueError:
+        return None
+    if not all(verify.results_equal(before[0], x) for x in after):
+        return None
+    med_a = statistics.median(x["ms"] for x in after)
+    try:
+        cost_after = cost_fn(rw["action"], actions) if cost_fn else fix["cost_after"]
+    except ValueError:
+        cost_after = fix["cost_after"]
+    planner = round(100 * (1 - cost_after / fix["cost_before"]), 1) if fix["cost_before"] else 0.0
+    rule = rw.get("rule_label") or "same-result rewrite"
+    return {**fix, "rewrite_sql": rw["action"], "rewrite_rule": rule, "combined_rewrite": True,
+            "cost_after": cost_after, "improvement_pct": planner, "planner_gain_pct": planner,
+            "measured_ms_after": round(med_a, 2),
+            "measured_gain_pct": round(100 * (1 - med_a / med_b), 1) if med_b else None,
+            "timing_note": f"median of {runs} sandbox runs each, same results (fix + rewrite together)",
+            "reason": fix["reason"] + f" Together with the query rewrite ({rule}): {med_b:,.0f} -> "
+                                      f"{med_a:,.0f} ms measured, same results."}
+
+
+def _time_winner(recs, masked_sql, time_fn, cost_fn=None, runs=TIME_WINNER_RUNS, rewrites=None):
     """Measure the verified index/partition fixes for real (plus partition + index combined),
     original vs fixed, median of `runs` each, through time_fn(masked_sql, actions=[...])
     (Person 1 checked_run on the sandbox copy). Then the fix with the best MEASURED gain
@@ -523,13 +554,23 @@ def _time_winner(recs, masked_sql, time_fn, cost_fn=None, runs=TIME_WINNER_RUNS)
                   "measured_gain_pct": round(100 * (1 - med_a / med_b), 1) if med_b else None,
                   "planner_gain_pct": r["improvement_pct"],
                   "timing_note": f"median of {runs} sandbox runs each, same results"})
+    extras = [combo] if combo else []
+    struct = [r for r in todo if r in recs and r.get("measured_gain_pct") is not None]
+    if struct:                                   # best partition/index fix + each same-result rewrite
+        best = max(struct, key=lambda r: r["measured_gain_pct"])
+        for rw in rewrites or []:
+            both = _with_rewrite(best, rw, before, med_b, time_fn, cost_fn, runs)
+            if both:
+                recs.append(both)
+                extras.append(both)
     timed = [r for r in recs if _measured_gain(r) is not None]
     if timed:                                    # best measured fix first, the rest keep their order
         best = max(timed, key=_measured_gain)
         recs.remove(best)
         recs.insert(0, best)
-    if combo in recs and combo is not recs[0]:   # only offer the combination when it wins
-        recs.remove(combo)
+    for x in extras:                             # only offer a combination when it wins
+        if x in recs and x is not recs[0]:
+            recs.remove(x)
     return rejected
 
 
@@ -589,8 +630,12 @@ def recommend(masked_sql, masked_plan, cost_fn, stats=None, time_fn=None, agent=
     novelty = NOVELTY_SEEN if s in agent.seen_states else NOVELTY_UNSEEN
     before = cost_fn(masked_sql, [])
 
+    # Two lanes: the top k index/partition options, plus EVERY applicable rewrite on its own
+    # (rewrites are timed anyway, so they never push an index or partition out of the shortlist).
+    structural = [t for t in ranked if t[1]["kind"] != "rewrite"][:max(1, k)]
+    shortlist = sorted(structural + [t for t in ranked if t[1]["kind"] == "rewrite"], key=lambda t: -t[0])
     tried = []
-    for score, c, _ in ranked[:max(1, k)]:
+    for score, c, _ in shortlist:
         rec = {"kind": c["kind"], "action": "; ".join(c["sqls"]) if c["kind"] != "rewrite" else c["sqls"][0],
                "cost_before": before, "novelty": novelty, "agent_score": round(score, 3),
                "write_penalty": round(WRITE_PENALTY_PER_COL * write_width(c), 3)}
@@ -640,7 +685,8 @@ def recommend(masked_sql, masked_plan, cost_fn, stats=None, time_fn=None, agent=
             and (t[0]["verified_by"] == "rule_only" or t[0]["improvement_pct"] > 0)]
     if not recs:
         return []
-    rejected_fixes = _time_winner(recs, masked_sql, time_fn, cost_fn)   # measured check of the winner
+    same_rewrites = [t[0] for t in tried if t[0]["kind"] == "rewrite" and t[0].get("same_results") is True]
+    rejected_fixes = _time_winner(recs, masked_sql, time_fn, cost_fn, rewrites=same_rewrites)   # measured check of the winner
     if not recs:
         return []
     # best rejected = the next-best option we tried, else the top one we never simulated
@@ -649,7 +695,8 @@ def recommend(masked_sql, masked_plan, cost_fn, stats=None, time_fn=None, agent=
     if others:
         _, c, measured = others[0]
     else:
-        c, measured = ranked[k][1] if len(ranked) > k else None, None
+        untried = [t for t in ranked if all(t[1] is not x[1] for x in shortlist)]
+        c, measured = untried[0][1] if untried else None, None
     _attach_write_latency(recs, write_fn)
     recs[0]["summary"] = bundle_summary(recs)
     if rejected_fixes:

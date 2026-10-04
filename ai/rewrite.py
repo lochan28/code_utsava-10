@@ -25,6 +25,10 @@ RULE_REASONS = {
     "function_to_range":
         "Wrapping the column in a function hides it from any index. An equivalent "
         "plain range on the column lets an index be used.",
+    "filter_join_to_exists":
+        "A table is joined only to check a condition; none of its columns are used. "
+        "EXISTS asks 'is there a matching row that passes?' and stops at the first one. "
+        "Same result when the join key is unique (checked by the timed same-results run).",
 }
 AGGREGATES = (exp.Sum, exp.Min, exp.Max, exp.Avg, exp.Count)
 TRUNC_UNITS = {"DAY", "WEEK", "MONTH", "QUARTER", "YEAR"}
@@ -185,7 +189,50 @@ def function_to_range(sql):
     return _sql(tree) if changed else None
 
 
-RULES = [correlated_subquery_to_join, not_in_to_not_exists, function_to_range]
+# ------------------------------------------------------------
+# Rule 4: a join used only as a filter -> EXISTS
+#   SELECT a.x FROM t1 a JOIN t2 b ON b.k = a.k WHERE a.y = $1 AND b.z <> $2
+#   -> SELECT a.x FROM t1 a WHERE a.y = $1
+#        AND EXISTS (SELECT 1 FROM t2 b WHERE b.k = a.k AND b.z <> $2)
+# Same rows only if b.k is unique (else the join repeats rows); masked SQL can't
+# show that, so the timed same-results check (rows + checksum) decides.
+# ------------------------------------------------------------
+def filter_join_to_exists(sql):
+    tree = _parse(sql)
+    for select in list(tree.find_all(exp.Select)):
+        where = select.args.get("where")
+        if where is None:
+            continue
+        out_names = {p.alias for p in select.expressions if isinstance(p, exp.Alias)}
+        for j in list(select.args.get("joins") or []):
+            t, on = j.this, j.args.get("on")
+            if (not isinstance(t, exp.Table) or j.args.get("side")
+                    or (j.args.get("kind") or "INNER").upper() != "INNER" or not isinstance(on, exp.EQ)):
+                continue
+            ref = _ref(t)
+            ends = list(on.find_all(exp.Column))
+            if sorted(c.table == ref for c in ends) != [False, True] or not all(c.table for c in ends):
+                continue                                   # need exactly: <this table>.k = <other>.k
+            conds = _split_and(where.this)
+            own = [c for c in conds if {x.table for x in c.find_all(exp.Column)} == {ref}]
+            if not own:
+                continue
+            allowed = {id(x) for x in ends} | {id(x) for c in own for x in c.find_all(exp.Column)}
+            cols = list(select.find_all(exp.Column))
+            if any(c.table == ref and id(c) not in allowed for c in cols):
+                continue                                   # its columns are used elsewhere
+            if any(not c.table and c.name not in out_names for c in cols):
+                continue                                   # unqualified column: can't tell its table
+            sub = exp.select(exp.Literal.number(1)).from_(t.copy()).where(
+                exp.and_(on.copy(), *[c.copy() for c in own]))
+            rest = [c for c in conds if not any(c is o for o in own)]
+            where.set("this", exp.and_(*rest, exp.Exists(this=sub)) if rest else exp.Exists(this=sub))
+            j.pop()
+            return _sql(tree)                              # one join per rewrite keeps it simple
+    return None
+
+
+RULES = [correlated_subquery_to_join, not_in_to_not_exists, function_to_range, filter_join_to_exists]
 
 
 def rewrite_sql(masked_sql):

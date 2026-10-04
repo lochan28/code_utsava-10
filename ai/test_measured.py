@@ -78,9 +78,37 @@ def test_combined_and_measured_pick():
     print("  combined summary:", top["summary"])
 
 
+def test_fix_plus_rewrite():
+    """Rewrite alone ~5%, partition 50%, both together 70%: the pair is offered, timed together."""
+    sql = ("SELECT COUNT(*) FROM t_1c1 AS a1 JOIN t_21e AS a4 ON a4.c_1e3 = a1.c_1e3 "
+           "WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND a4.c_03e <> $3")
+    types = {"t_1c1.c_0b8": "number", "t_1c1.c_02b": "date", "t_21e.c_03e": "text"}
+    stats = {**STATS, "range_sel": {"t_1c1.c_02b": 0.1}}
+
+    def flags(sql_, acts):
+        return "EXISTS" in sql_, any("PARTITION" in a for a in acts), any("INDEX" in a for a in acts)
+
+    def cost(sql_, acts):
+        rw, p, i = flags(sql_, acts)
+        return 1000.0 - 500 * p - 300 * i - 20 * rw
+
+    def timed(sql_, actions=()):
+        rw, p, i = flags(sql_, actions)
+        ms = 100.0 * (0.5 if p else 1) * (0.8 if i else 1) * (0.6 if rw and p else 0.95 if rw else 1)
+        return {"ms": ms, "rows": 1, "checksum": "same"}
+
+    recs = rl.recommend(sql, PLAN, cost, stats=stats, time_fn=timed, agent=rl.BanditAgent(), column_types=types,
+                        k=10)                    # untrained agent ranks all at 0: shortlist every option
+    top = recs[0]
+    assert top.get("rewrite_sql") and "EXISTS" in top["rewrite_sql"], top
+    assert top["measured_gain_pct"] > 65, top["measured_gain_pct"]
+    assert "rewrite the query" in top["summary"], top["summary"]
+    print("  fix + rewrite summary:", top["summary"])
+
+
 if __name__ == "__main__":
     for t in (test_time_fn_present, test_time_fn_missing, test_results_differ_rejects,
-              test_combined_and_measured_pick):
+              test_combined_and_measured_pick, test_fix_plus_rewrite):
         t()
         print("PASS", t.__name__)
     print("example summary:", run(make_time_fn())[0]["summary"])
