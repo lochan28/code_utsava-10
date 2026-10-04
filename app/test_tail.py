@@ -32,7 +32,7 @@ MEASURED = {"verified_by": "timed_run", "measured_ms_before": 800.0, "measured_m
             "measured_gain_pct": 75.0, "planner_gain_pct": 80.0, "timing_note": "median of 5 sandbox runs each, same results"}
 
 
-def run_with(recs):
+def run_with(recs, rl_fn=None, write_result=None):
     """analyze() with a stand-in AI returning `recs` and spies on the three measuring functions."""
     seen = {"timed_run": [], "write": [], "size": []}
 
@@ -42,7 +42,9 @@ def run_with(recs):
 
     def write(index_sql):
         seen["write"].append(index_sql)
-        return {"delta_ms": 0.002}
+        if isinstance(write_result, Exception):
+            raise write_result
+        return write_result or {"before_ms": 0.01, "after_ms": 0.012, "delta_ms": 0.002}
 
     def size(index_sql):
         seen["size"].append(index_sql)
@@ -50,7 +52,7 @@ def run_with(recs):
     with ExitStack() as stack:
         stack.enter_context(fresh_audit_log())
         for obj, name, value in [(llm, "_call_ollama", _no_ollama), (llm, "start_warmup", lambda: None),
-                                 (rl, "recommend", lambda *a, **k: [dict(r) for r in recs]),
+                                 (rl, "recommend", rl_fn or (lambda *a, **k: [dict(r) for r in recs])),
                                  (gnn, "find_bottleneck", stand_in_bottleneck),
                                  (sandbox, "timed_run", timed), (sandbox, "measure_write_latency", write),
                                  (sandbox, "index_size_bytes", size)]:
@@ -112,6 +114,54 @@ def test_prose_in_a_recommendation_may_contain_a_number_equal_to_a_query_literal
     assert bad["leak_check"] is False
     bad, _ = run_with([rec("index", INDEX_M, reason="r", verified_by="small_business")])
     assert bad["leak_check"] is False                        # a real value in a structural field stays strict
+
+
+def spying_recommend(recs, calls):
+    """A stand-in recommend() that takes write_fn like Person 3's and calls it once, like _attach_write_latency."""
+    def recommend(masked_sql, masked_plan, cost_fn, write_fn=None, **k):
+        out = [dict(r) for r in recs]
+        for action in ([INDEX_M] if write_fn else []):
+            for attempt in (action, PART_M):
+                try:
+                    calls.append(("ok", write_fn(attempt)))
+                except Exception as e:                       # noqa: BLE001
+                    calls.append((type(e).__name__, str(e)))
+        return out
+    return recommend
+
+
+def test_write_fn_measures_one_plain_index_with_real_names_and_ai_gets_numbers_only():
+    calls = []
+    r, seen = run_with([rec("index", INDEX_M)], rl_fn=spying_recommend([rec("index", INDEX_M)], calls))
+    assert seen["write"][0] == INDEX_REAL                                          # the sandbox: real names
+    assert calls[0] == ("ok", {"before_ms": 0.01, "after_ms": 0.012, "delta_ms": 0.002})
+    assert calls[1][0] == "ValueError" and "orders" not in calls[1][1]             # a partition is refused first
+    assert seen["write"].count(PART_REAL) == 0 and PART_M not in seen["write"]
+
+
+def test_write_fn_failures_carry_only_the_error_type():
+    calls = []
+    run_with([rec("index", INDEX_M)], rl_fn=spying_recommend([rec("index", INDEX_M)], calls),
+             write_result=RuntimeError("boom with Rahul Sharma in it"))
+    assert calls[0] == ("RuntimeError", "RuntimeError") and "Rahul" not in str(calls)
+
+
+def test_ais_measured_write_latency_is_used_and_not_measured_again():
+    wl = {"source": "measured", "before_ms_per_row": 0.01, "delta_ms_per_row": 0.004, "pct": 40.0, "indexes": 1}
+    r, seen = run_with([rec("index", INDEX_M, write_latency=wl)])
+    assert r["write_latency_ms"] == 0.004 and seen["write"] == []
+    est = {"source": "estimated", "delta_ms_per_row": 0.9, "note": "width-based write penalty, not measured"}
+    r, seen = run_with([rec("index", INDEX_M, write_latency=est)])
+    assert seen["write"] == [INDEX_REAL] and r["write_latency_ms"] == 0.002        # an estimate is not used as a measurement
+
+
+def test_deploy_rewrites_are_aligned_with_the_recommendations_and_real():
+    first = rec("index", INDEX_M, rewrite_sql=f"SELECT count(*) FROM {T}", rewrite_rule="filter join to exists")
+    second = rec("index", f"CREATE INDEX ON {T} ({C_DATE})")
+    r, _ = run_with([first, second])
+    assert r["deploy_rewrites"] == ["SELECT count(*) FROM orders", ""]
+    assert len(r["deploy_rewrites"]) == len(r["recommendations"]) == len(r["deploy_scripts"])
+    assert T not in r["deploy_rewrites"][0] and r["leak_check"] is True
 
 
 def run_all():

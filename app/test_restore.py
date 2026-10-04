@@ -23,6 +23,9 @@ from app.test_privacy import fresh_audit_log
 from db import sandbox
 from privacy import mask
 
+_M = mask.build_mapping()
+T0, C0 = _M.tables["customers"], _M.columns["customer_id"]      # masked names for the tripwire index fix
+
 
 def _no_ollama(prompt):
     raise llm.LLMUnavailable("Ollama is off in this test")
@@ -114,7 +117,10 @@ def run_tripwire(module, reply="Canned explanation."):
         time_fn(rewrite_m)
         cost_fn(rewrite_m, [])
         return [{"kind": "rewrite", "action": rewrite_m, "cost_before": 100.0, "cost_after": 50.0,
-                 "reason": "Same result, simpler.", "verified_by": "timed_run"}]
+                 "reason": "Same result, simpler.", "verified_by": "timed_run"},
+                {"kind": "index", "action": f"CREATE INDEX ON {T0} ({C0})", "cost_before": 100.0, "cost_after": 20.0,
+                 "reason": "An index, timed together with the rewrite.", "verified_by": "timed_run",
+                 "rewrite_sql": rewrite_m, "rewrite_rule": "filter join to exists"}]
 
     def bottleneck(masked_plan):
         to_ai.append(json.dumps(masked_plan, default=str))
@@ -139,8 +145,10 @@ def run_tripwire(module, reply="Canned explanation."):
         LAST["result"] = r
         audit = json.dumps(llm.get_audit_log(), default=str)
     # deploy_sql / deploy_scripts / explanation_unmasked ARE the Approve text, the one place real values may live
-    result_without_script = json.dumps({k: v for k, v in r.items() if k not in ("deploy_sql", "deploy_scripts", "explanation_unmasked")},
+    result_without_script = json.dumps({k: v for k, v in r.items() if k not in
+                                        ("deploy_sql", "deploy_scripts", "deploy_rewrites", "explanation_unmasked")},
                                        default=str)
+    LAST["deploy_rewrites"] = r["deploy_rewrites"]
     return to_ai, sandbox_saw, result_without_script, audit, r["deploy_sql"]
 
 
@@ -163,6 +171,8 @@ def test_tripwire_no_real_value_reaches_ai_the_llm_the_log_or_the_result():
     assert any(all(v in s for v in SENSITIVE) and "$" not in s for s in sandbox_saw), "sandbox never got the real values"
     assert all(v in deploy for v in SENSITIVE), "the Approve script is missing the real values"
     assert "$1" not in deploy
+    rewrites = LAST["deploy_rewrites"]                                   # the rewrite that goes with the index fix
+    assert rewrites[0] == "" and all(v in rewrites[1] for v in SENSITIVE) and "$" not in rewrites[1]
 
 
 def test_explanation_unmasked_has_real_names_and_never_reaches_ai_the_log_or_a_prompt():

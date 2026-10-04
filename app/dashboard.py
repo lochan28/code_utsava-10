@@ -130,6 +130,10 @@ def render_rec(rec, top):
                     st.code(step, language="sql")
             elif isinstance(action, str) and action.strip():
                 st.code(action, language="sql")
+            if isinstance(rec.get("rewrite_sql"), str) and rec["rewrite_sql"].strip():     # timed together with the fix
+                rule = rec.get("rewrite_rule") if isinstance(rec.get("rewrite_rule"), str) else ""
+                st.caption("Also rewrite the query" + (f" ({md_safe(rule)})" if rule else "") + ":")
+                st.code(rec["rewrite_sql"], language="sql")
             else:
                 st.caption("No fix text (the masked SQL could not be analysed).")
         with c_reason:
@@ -318,7 +322,8 @@ def render_approve(r, key):
     if key in st.session_state.approved:
         st.warning("NOT EXECUTED, review before running. Nothing has been applied to your database.",
                    icon=":material/gpp_maybe:")
-        script = approve.build_script(top.get("kind"), sql, verified_badge(top)[0])
+        script = approve.build_script(top.get("kind"), sql, verified_badge(top)[0],
+                                      approve.rewrite_for(r, top), top.get("rewrite_rule"))
         st.code(script, language="sql")            # has its own copy button
         st.download_button("Download as .sql", data=script, file_name="approved_fix.sql",
                            mime="text/plain", key=f"download_{key}")
@@ -371,7 +376,8 @@ question = st.chat_input("Ask about a slow report, e.g. 'Why is the weekly sales
                          "or paste a SELECT")
 if question:
     entry = {"question": question, "result": None, "error": None}
-    with st.spinner("Analysing: masking, finding the bottleneck, simulating fixes..."):
+    with st.spinner("Analysing: masking, finding the bottleneck, simulating and timing fixes... "
+                    "this can take up to a minute."):
         try:
             entry["result"] = (demo_mode.answer if demo_on else pipeline.analyze)(question)
         except ValueError as e:    # rejected SQL, or PrivacyError (a subclass of ValueError)

@@ -181,7 +181,8 @@ def test_old_style_recommend_without_extra_arguments_still_works():
     built = []
     patches = [(sandbox, "checked_run", lambda sql: built.append("run") or fake_checked_run(sql)),
                (sandbox, "table_stats", lambda sql=None: built.append("stats") or {}),
-               (mask, "mask_stats", lambda s, m: s), (mask, "column_types", lambda m: {})]
+               (mask, "mask_stats", lambda s, m: s), (mask, "column_types", lambda m: {}),
+               (pipeline, "make_write_fn", lambda m: built.append("write_fn"))]   # write_fn must not even be BUILT
     def three_argument_recommend(masked_sql, masked_plan, cost_fn):          # the old signature
         return [{"kind": "index", "action": f"CREATE INDEX ON {T} ({C_REGION})", "cost_before": 100.0,
                  "cost_after": 10.0, "reason": "no index"}]

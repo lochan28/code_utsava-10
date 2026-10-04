@@ -9,7 +9,9 @@ Everything below is OUR side of the contract. Items marked **LEAD** need the lea
 | `llm` | how the explanation was made: `{source, prompt_leak_ok, reply_leak_ok, latency_ms, fallback_reason}` |
 | `unsafe_rewrite` | `True` if any rewrite returned different rows than the original query |
 | `ai_inputs` | which optional inputs `ai/` really got: `{time_fn, stats, column_types}`, each `"used"`, `"not available yet"`, `"not supported by ai/ yet"`, `"dropped: failed the leak check"`, `"unavailable"` or `"failed: rewrites are unverified"` |
-| _(per recommendation, set by ai/)_ | `measured_gain_pct`, `measured_ms_before`, `measured_ms_after`, `planner_gain_pct`, `timing_note`, `rejected_fixes`, `combined`. The page shows the measured numbers as the headline, the planner estimate in a collapsed box, the note under the time chart, rejected fixes as a neutral note, and a combined fix (`PARTITION ...; CREATE INDEX ...`) as two steps |
+| _(per recommendation, set by ai/)_ | bottleneck: `second_opinion` ({op, relation, confidence, agrees}, hidden when None) and `evidence.gnn_top3` (small bar chart). Fixes: `measured_gain_pct`, `measured_ms_before`, `measured_ms_after`, `planner_gain_pct`, `timing_note`, `rejected_fixes`, `combined`. The page shows the measured numbers as the headline, the planner estimate in a collapsed box, the note under the time chart, rejected fixes as a neutral note, and a combined fix (`PARTITION ...; CREATE INDEX ...`) as two steps |
+| _(per recommendation, set by ai/)_ | also `write_latency` (`{source: measured|estimated, delta_ms_per_row, pct}`; only a measured one is used), `rewrite_sql` + `rewrite_rule` (the fix was timed together with a query rewrite), `combined_rewrite`. The page shows the rewrite under the fix, and the rule in the evidence list |
+| `deploy_rewrites` | the un-masked query rewrite that goes with EACH recommendation (`""` if none), same order as `recommendations`. **Approve step only**, restored after the AI and the LLM are finished |
 | `deploy_scripts` | the un-masked fix for EACH recommendation, same order as `recommendations` (real values restored). **Approve step only.** `deploy_sql` is the first one |
 | `explanation_unmasked` | the explanation with the admin's real names put back. Built from the FINISHED explanation (after the LLM call), so it never reaches a prompt, the audit log or `ai/`. Shown ONLY inside the Approve section, after the click |
 | `demo` | `True` only on results that Demo mode returned from the recording |
@@ -25,7 +27,7 @@ sorted below every safe fix, so it can never be the "best" one.
 2. **`cost_fn` costs one `CREATE INDEX ...` or one `PARTITION t BY RANGE (c) MONTHLY`** (`SIMULATABLE_ACTION`
    in `pipeline.py`). Anything else (YEARLY, several statements, DROP ...) raises `ValueError`, which P3
    turns into `rule_only`. For rewrites the real values are put back first (section 9).
-3. **`time_fn(masked_sql, actions=())` returns `{"ms", "results_match"}`, NOT `{"ms", "rows", "checksum"}`.** `actions` = masked CREATE INDEX / one MONTHLY partition, applied on the sandbox copy before timing (restored to real names only there). A fix the sandbox cannot build raises `ValueError` (ai/ keeps its planner figure). The same (sql, actions) is run once: `checked_run` already takes a median of 5 runs, so ai/'s 5 repeated calls cost one run. The real run's
+3. **`time_fn(masked_sql, actions=())` returns `{"ms", "results_match"}`, NOT `{"ms", "rows", "checksum"}`.** `actions` = masked CREATE INDEX / one MONTHLY partition, applied on the sandbox copy before timing (restored to real names only there). A fix the sandbox cannot build raises `ValueError` (ai/ keeps its planner figure). The original query's baseline is measured once. A fix that ai/ asks for 5 times is measured fresh each time, so its "median of 5" is real (about 20-30 s more per analysis); set `CACHE_FIX_TIMINGS = True` at the top of `pipeline.py` to reuse the first answer instead (faster, one sample per fix). The real run's
    rows and checksum are compared inside `pipeline.py` (against the original query) and never go to
    `ai/`. This means no value derived from real result rows reaches `ai/`, so there is nothing to
    approve about that. **It breaks P3's `ai/verify.py`** (reads `rows` and `checksum` directly).
@@ -42,7 +44,7 @@ sorted below every safe fix, so it can never be the "best" one.
    crash, they are dropped and an audit event is written. If the real timing run fails, the
    pipeline calls `recommend()` again without `time_fn` (P3's code does not catch that error).
 7. **Strict privacy gate:** `PRIVACY_STRICT` (default `1`, below).
-8. **Un-masking is ours, in three marked places** (section 9). `ai/` only ever gets masked text; a rewrite is
+8. **`write_fn` (contract v3)**: `recommend(..., write_fn=)` gets `write_fn(masked CREATE INDEX) -> {before_ms, after_ms, delta_ms}` (one plain index only; names restored only for the sandbox; failures carry the error TYPE). **Un-masking is ours, in three marked places** (section 9). `ai/` only ever gets masked text; a rewrite is
    verified on the sandbox with the real values restored just before the call.
 9. **Measured time is the headline** whenever a measured time exists; the planner estimate sits in a collapsed
    expander and may disagree (amber note, not red). Without a measured time the page shows the estimate.
@@ -103,9 +105,9 @@ Shown for the **top pick** (first by trust: measured, simulated, rule-only, unve
   not used, so the explanations are the template). In Demo mode no database, sandbox, Ollama call or Ollama
   warm-up happens (`app/test_demo_mode.py` rigs all of them to explode). Pasted SQL and unmatched questions get a
   plain message. A violet badge and a banner say "recorded results".
-- The recording in the repo was made with Person 3's real agent (`ai` branch) on the 1M-order dataset.
-  **Re-record whenever `ai/`, the sandbox or the dataset changes** (about 75 s).
-- The recording holds the demo queries' own literals in `deploy_scripts` / `explanation_unmasked` (demo data, not
+- The recording in the repo was made with Person 3's real agent (`ai` branch, commit `73ea204`) on the 5M-order dataset.
+  **Re-record whenever `ai/`, the sandbox or the dataset changes** (about 5 minutes on 5M orders).
+- The recording holds the demo queries' own literals in `deploy_scripts` / `deploy_rewrites` / `explanation_unmasked` (demo data, not
   private data). The Approve step works in Demo mode (it only shows text).
 - The sidebar sample switch ("every badge type", made-up numbers) is OFF by default, and is HIDDEN while Demo mode
   is on: made-up numbers never show next to a demo.
@@ -152,6 +154,8 @@ functions first. **Person 1: please use a restricted role.**
 .venv/Scripts/python -m app.test_time_actions     # time_fn(masked_sql, actions): timing a fix on the sandbox copy
 .venv/Scripts/python -m app.test_tail             # combined fixes, index-part-only write cost, Approve script for a combined fix
 .venv/Scripts/python -m app.test_ai_fields        # the page shows ai/'s measured fields, rejected and combined fixes
+.venv/Scripts/python -m app.test_gnn_fields       # GNN second opinion, top-3 chart, rewrite rule label
+.venv/Scripts/python -m app.test_rewrite_fix      # a fix timed with a query rewrite: script, card, ai/'s write latency
 ```
 (`test_restore` and `test_approve` use the real masker and read-only sandbox runs, so they need the Docker database.)
 
@@ -160,7 +164,8 @@ functions first. **Person 1: please use a restricted role.**
   doubled; numbers stay bare (the type is read from the original SQL because the masker does not record it).
 - Approve only SHOWS a script (`BEGIN; ... ROLLBACK;` with real statements, "NOT EXECUTED"), plus copy and
   download. It never runs anything. One script per recommendation (`deploy_scripts`); the page shows the top pick's.
-- A partition has no executable script (it is a multi-step migration): comments only.
+- A partition has no executable script (it is a multi-step migration): comments only. A combined fix adds its CREATE INDEX as a real statement. A query rewrite that was timed with the fix is written as COMMENTS ("replace the query in your application with this one"): it is a code change, not something to run.
+- The script text is hardened against newlines: everything inside a comment is one line, an index must be one line, and a "rewrite" is a statement only if it is exactly one plain SELECT (else comments). Found by a test; it existed since 4d.
 - Stats and column types are checked with their KEYS too, because `verify_no_leak` ignores JSON keys.
 - The planner and the stopwatch can disagree: in the recording q07's rewrite is 87% faster measured while the
   planner cost says 23% worse. The page leads with the measured time and shows the estimate in a collapsed box
@@ -172,7 +177,7 @@ functions first. **Person 1: please use a restricted role.**
 ## 13. Asks for other people
 - **Lead:** merge the `ai` branch into master (master still has the 3-argument stub `rl.recommend`), then re-run
   `python -m app.record_demo` so the Demo mode recording matches what is merged.
-- **Person 3:** `ai/verify.py` already reads `results_match` (done). `stats` arrives with `eq_sel` filled in. Please keep `pipeline.py` out of your commits (it is Person 4's file; the leak checks are in `analyze()` already). A fix that is dropped should keep going into `rejected_fixes` as masked text.
+- **Person 3:** `ai/verify.py` already reads `results_match` (done). `stats` arrives with `eq_sel` filled in. `pipeline.py` stays Person 4's (the leak checks are in `analyze()`). `time_fn(masked_sql, actions)`, `cost_fn` (costs the SQL it is given) and `write_fn` are wired. The ai_inputs words "not supported by ai/ yet" only appear when `recommend()` really lacks the parameter. A fix that is dropped should keep going into `rejected_fixes` as masked text.
 - **Person 2:** `mask_query` turns an existing `$1` into `$$1` and then flags it as a leak (any logged query or pasted SQL that already has `$n`). Fix: leave existing `$n` placeholders alone.
 - (4c) `table_stats` is now called with the SQL so Person 3 gets `range_sel`; `PARTITION ... MONTHLY` is passed to `cost`.
 - **Person 1 (db/sandbox.py):** pasted SQL reaches `get_plan()`, `cost()` and `checked_run()`. They
