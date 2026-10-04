@@ -105,6 +105,35 @@ def bottleneck_items(b):
     return items
 
 
+def _step_label(op, relation):
+    return f"{op} on {relation}" if relation else str(op)
+
+
+def second_opinion_line(b):
+    """(text, colour) for the GNN's second opinion on the bottleneck, or None (hide it)."""
+    so = b.get("second_opinion") if isinstance(b, dict) else None
+    if not isinstance(so, dict) or not isinstance(so.get("agrees"), bool) or not _num(so.get("confidence"))             or not 0 <= so["confidence"] <= 1:
+        return None
+    pct = f"{so['confidence'] * 100:.0f}%"
+    if so["agrees"]:
+        return f"GNN second opinion: agrees ({pct})", "green"
+    op = so.get("op")
+    rated = f" and rates {_step_label(op, so.get('relation'))} highest" if isinstance(op, str) and op else ""
+    return f"GNN second opinion: disagrees{rated} ({pct})", "orange"
+
+
+def gnn_top3_rows(b):
+    """[{"label", "score", "node_id"}] for the GNN's top steps (at most 3, best first), or []."""
+    ev = b.get("evidence") if isinstance(b, dict) else None
+    top = ev.get("gnn_top3") if isinstance(ev, dict) else None
+    rows = []
+    for r in top if isinstance(top, list) else []:
+        if isinstance(r, dict) and isinstance(r.get("op"), str) and r["op"] and _num(r.get("score"))                 and 0 <= r["score"] <= 1:
+            rel = r.get("relation") if isinstance(r.get("relation"), str) else None
+            rows.append({"label": _step_label(r["op"], rel), "score": r["score"], "node_id": r.get("node_id")})
+    return sorted(rows, key=lambda x: -x["score"])[:3]
+
+
 def bottleneck_node_id(b):
     """The plan step to highlight, or None."""
     nid = b.get("node_id") if isinstance(b, dict) else None
@@ -186,6 +215,8 @@ def evidence_items(rec):
         items.append(("planner estimate", f"{rec['planner_gain_pct']:.0f}%"))
     if _num(rec.get("speedup")):
         items.append(("speedup", f"{rec['speedup']:.1f}x"))
+    if isinstance(rec.get("rule_label"), str) and rec["rule_label"]:
+        items.append(("rewrite rule", rec["rule_label"]))
     if isinstance(rec.get("verify_note"), str) and rec["verify_note"]:
         items.append(("check", rec["verify_note"]))
     return items

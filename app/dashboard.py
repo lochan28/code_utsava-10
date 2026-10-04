@@ -17,8 +17,8 @@ import pipeline  # noqa: E402
 from app import approve, charts, demo_mode, llm, sample_data, tradeoff  # noqa: E402
 from app.ui_helpers import (  # noqa: E402
     ai_inputs_line, bottleneck_items, bottleneck_node_id, confidence_counts, confidence_strip,
-    evidence_items, match_line, md_safe, novelty_badge, plan_tree_text, sort_recommendations,
-    tier, verified_badge)
+    evidence_items, gnn_top3_rows, match_line, md_safe, novelty_badge, plan_tree_text, sort_recommendations,
+    second_opinion_line, tier, verified_badge)
 
 # ============================================================
 # TUNABLE SETTINGS
@@ -86,8 +86,15 @@ def render_bottleneck(b):
         if "found by" in d:
             st.badge(f"found by: {d['found by']}", icon=":material/search:",
                      color="violet" if "GNN" in d["found by"] else "gray")
+        opinion = second_opinion_line(b)
+        if opinion:
+            st.badge(opinion[0], icon=":material/psychology:", color=opinion[1])
         if "why" in d:
             st.markdown(md_safe(d["why"]))
+        rows = gnn_top3_rows(b)
+        if rows:
+            st.caption("The GNN's highest-rated steps (violet = the one picked)")
+            st.altair_chart(charts.gnn_top3_chart(rows, bottleneck_node_id(b)), width="stretch")
 
 
 # ------------------------------------------------------------------
