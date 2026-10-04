@@ -589,8 +589,12 @@ def recommend(masked_sql, masked_plan, cost_fn, stats=None, time_fn=None, agent=
     novelty = NOVELTY_SEEN if s in agent.seen_states else NOVELTY_UNSEEN
     before = cost_fn(masked_sql, [])
 
+    # Two lanes: the top k index/partition options, plus EVERY applicable rewrite on its own
+    # (rewrites are timed anyway, so they never push an index or partition out of the shortlist).
+    structural = [t for t in ranked if t[1]["kind"] != "rewrite"][:max(1, k)]
+    shortlist = sorted(structural + [t for t in ranked if t[1]["kind"] == "rewrite"], key=lambda t: -t[0])
     tried = []
-    for score, c, _ in ranked[:max(1, k)]:
+    for score, c, _ in shortlist:
         rec = {"kind": c["kind"], "action": "; ".join(c["sqls"]) if c["kind"] != "rewrite" else c["sqls"][0],
                "cost_before": before, "novelty": novelty, "agent_score": round(score, 3),
                "write_penalty": round(WRITE_PENALTY_PER_COL * write_width(c), 3)}
@@ -649,7 +653,8 @@ def recommend(masked_sql, masked_plan, cost_fn, stats=None, time_fn=None, agent=
     if others:
         _, c, measured = others[0]
     else:
-        c, measured = ranked[k][1] if len(ranked) > k else None, None
+        untried = [t for t in ranked if all(t[1] is not x[1] for x in shortlist)]
+        c, measured = untried[0][1] if untried else None, None
     _attach_write_latency(recs, write_fn)
     recs[0]["summary"] = bundle_summary(recs)
     if rejected_fixes:

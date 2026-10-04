@@ -1,6 +1,6 @@
 {
  "recorded": true,
- "recorded_at": "2026-10-04T02:14:23",
+ "recorded_at": "2026-10-04T06:53:23",
  "source": "p3_record_demo.py: real Postgres, Person 1 sandbox cost()/table_stats()/measure_write_latency(), masked",
  "question": "Why is the weekly sales report slow?",
  "query_id": "q11",
@@ -245,11 +245,16 @@
    "cost": 85863.84
   },
   {
+   "sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND EXISTS(SELECT 1 FROM t_21e AS a4 WHERE a4.c_1e3 = a1.c_1e3 AND a4.c_03e <> $3) GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
+   "actions": [],
+   "cost": 85863.84
+  },
+  {
    "sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a JOIN t_21e AS a4 ON a4.c_1e3 = a1.c_1e3 WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND a4.c_03e <> $3 GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
    "actions": [
     "PARTITION t_1c1 BY RANGE (c_02b) MONTHLY"
    ],
-   "cost": 11048.85
+   "cost": 5268.31
   },
   {
    "sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a JOIN t_21e AS a4 ON a4.c_1e3 = a1.c_1e3 WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND a4.c_03e <> $3 GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
@@ -271,7 +276,7 @@
     "PARTITION t_1c1 BY RANGE (c_02b) MONTHLY",
     "CREATE INDEX ON t_1c1 (c_0b8)"
    ],
-   "cost": 9545.94
+   "cost": 3765.41
   }
  ],
  "time_calls": [
@@ -279,7 +284,16 @@
    "sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a JOIN t_21e AS a4 ON a4.c_1e3 = a1.c_1e3 WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND a4.c_03e <> $3 GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
    "actions": [],
    "result": {
-    "ms": 87.38,
+    "ms": 109.55,
+    "rows": 40,
+    "checksum": "0d01f2944f3f0a00a720765b466d88dc"
+   }
+  },
+  {
+   "sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND EXISTS(SELECT 1 FROM t_21e AS a4 WHERE a4.c_1e3 = a1.c_1e3 AND a4.c_03e <> $3) GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
+   "actions": [],
+   "result": {
+    "ms": 111.98,
     "rows": 40,
     "checksum": "0d01f2944f3f0a00a720765b466d88dc"
    }
@@ -288,7 +302,7 @@
    "sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a JOIN t_21e AS a4 ON a4.c_1e3 = a1.c_1e3 WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND a4.c_03e <> $3 GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
    "actions": [],
    "result": {
-    "ms": 95.21,
+    "ms": 104.57,
     "rows": 40,
     "checksum": "0d01f2944f3f0a00a720765b466d88dc"
    }
@@ -297,7 +311,7 @@
    "sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a JOIN t_21e AS a4 ON a4.c_1e3 = a1.c_1e3 WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND a4.c_03e <> $3 GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
    "actions": [],
    "result": {
-    "ms": 96.49,
+    "ms": 102.55,
     "rows": 40,
     "checksum": "0d01f2944f3f0a00a720765b466d88dc"
    }
@@ -306,7 +320,7 @@
    "sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a JOIN t_21e AS a4 ON a4.c_1e3 = a1.c_1e3 WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND a4.c_03e <> $3 GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
    "actions": [],
    "result": {
-    "ms": 108.0,
+    "ms": 110.4,
     "rows": 40,
     "checksum": "0d01f2944f3f0a00a720765b466d88dc"
    }
@@ -315,7 +329,16 @@
    "sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a JOIN t_21e AS a4 ON a4.c_1e3 = a1.c_1e3 WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND a4.c_03e <> $3 GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
    "actions": [],
    "result": {
-    "ms": 92.0,
+    "ms": 106.88,
+    "rows": 40,
+    "checksum": "0d01f2944f3f0a00a720765b466d88dc"
+   }
+  },
+  {
+   "sql": "SELECT a2.c_82a AS x_c69, DATE_TRUNC('WEEK', a1.c_02b) AS x_6df, a3.c_edb, COUNT(DISTINCT a1.c_1e3) AS x_274, SUM(a1.c_cf3) AS x_371 FROM t_1c1 AS a1 JOIN t_f23 AS a2 ON a2.c_0b8 = a1.c_0b8 JOIN t_0a3 AS a3 ON a3.c_c3a = a1.c_c3a JOIN t_21e AS a4 ON a4.c_1e3 = a1.c_1e3 WHERE a1.c_0b8 = $1 AND a1.c_02b >= $2 AND a4.c_03e <> $3 GROUP BY a2.c_82a, x_6df, a3.c_edb ORDER BY x_6df, x_371 DESC",
+   "actions": [],
+   "result": {
+    "ms": 109.2,
     "rows": 40,
     "checksum": "0d01f2944f3f0a00a720765b466d88dc"
    }
@@ -326,7 +349,7 @@
     "PARTITION t_1c1 BY RANGE (c_02b) MONTHLY"
    ],
    "result": {
-    "ms": 85.92,
+    "ms": 41.47,
     "rows": 40,
     "checksum": "0d01f2944f3f0a00a720765b466d88dc"
    }
@@ -337,7 +360,7 @@
     "PARTITION t_1c1 BY RANGE (c_02b) MONTHLY"
    ],
    "result": {
-    "ms": 40.82,
+    "ms": 54.41,
     "rows": 40,
     "checksum": "0d01f2944f3f0a00a720765b466d88dc"
    }
@@ -348,7 +371,7 @@
     "PARTITION t_1c1 BY RANGE (c_02b) MONTHLY"
    ],
    "result": {
-    "ms": 72.52,
+    "ms": 77.38,
     "rows": 40,
     "checksum": "0d01f2944f3f0a00a720765b466d88dc"
    }
@@ -359,7 +382,7 @@
     "PARTITION t_1c1 BY RANGE (c_02b) MONTHLY"
    ],
    "result": {
-    "ms": 51.66,
+    "ms": 44.92,
     "rows": 40,
     "checksum": "0d01f2944f3f0a00a720765b466d88dc"
    }
@@ -370,7 +393,7 @@
     "PARTITION t_1c1 BY RANGE (c_02b) MONTHLY"
    ],
    "result": {
-    "ms": 63.06,
+    "ms": 46.03,
     "rows": 40,
     "checksum": "0d01f2944f3f0a00a720765b466d88dc"
    }
@@ -381,7 +404,7 @@
     "CREATE INDEX ON t_1c1 (c_0b8)"
    ],
    "result": {
-    "ms": 141.83,
+    "ms": 122.46,
     "rows": 40,
     "checksum": "0d01f2944f3f0a00a720765b466d88dc"
    }
@@ -392,7 +415,7 @@
     "CREATE INDEX ON t_1c1 (c_0b8)"
    ],
    "result": {
-    "ms": 181.42,
+    "ms": 118.5,
     "rows": 40,
     "checksum": "0d01f2944f3f0a00a720765b466d88dc"
    }
@@ -403,7 +426,7 @@
     "CREATE INDEX ON t_1c1 (c_0b8)"
    ],
    "result": {
-    "ms": 151.12,
+    "ms": 115.91,
     "rows": 40,
     "checksum": "0d01f2944f3f0a00a720765b466d88dc"
    }
@@ -414,7 +437,7 @@
     "CREATE INDEX ON t_1c1 (c_0b8)"
    ],
    "result": {
-    "ms": 118.79,
+    "ms": 149.53,
     "rows": 40,
     "checksum": "0d01f2944f3f0a00a720765b466d88dc"
    }
@@ -425,7 +448,7 @@
     "CREATE INDEX ON t_1c1 (c_0b8)"
    ],
    "result": {
-    "ms": 131.5,
+    "ms": 146.54,
     "rows": 40,
     "checksum": "0d01f2944f3f0a00a720765b466d88dc"
    }
@@ -437,7 +460,7 @@
     "CREATE INDEX ON t_1c1 (c_0b8)"
    ],
    "result": {
-    "ms": 44.27,
+    "ms": 57.44,
     "rows": 40,
     "checksum": "0d01f2944f3f0a00a720765b466d88dc"
    }
@@ -449,7 +472,7 @@
     "CREATE INDEX ON t_1c1 (c_0b8)"
    ],
    "result": {
-    "ms": 48.22,
+    "ms": 36.05,
     "rows": 40,
     "checksum": "0d01f2944f3f0a00a720765b466d88dc"
    }
@@ -461,7 +484,7 @@
     "CREATE INDEX ON t_1c1 (c_0b8)"
    ],
    "result": {
-    "ms": 37.56,
+    "ms": 50.03,
     "rows": 40,
     "checksum": "0d01f2944f3f0a00a720765b466d88dc"
    }
@@ -473,7 +496,7 @@
     "CREATE INDEX ON t_1c1 (c_0b8)"
    ],
    "result": {
-    "ms": 28.61,
+    "ms": 56.34,
     "rows": 40,
     "checksum": "0d01f2944f3f0a00a720765b466d88dc"
    }
@@ -485,7 +508,7 @@
     "CREATE INDEX ON t_1c1 (c_0b8)"
    ],
    "result": {
-    "ms": 47.24,
+    "ms": 39.45,
     "rows": 40,
     "checksum": "0d01f2944f3f0a00a720765b466d88dc"
    }
@@ -495,9 +518,9 @@
   {
    "sql": "CREATE INDEX ON t_1c1 (c_0b8)",
    "result": {
-    "before_ms": 0.00178,
-    "after_ms": 0.00301,
-    "delta_ms": 0.00122
+    "before_ms": 0.00145,
+    "after_ms": 0.00326,
+    "delta_ms": 0.00181
    }
   }
  ],

@@ -82,8 +82,13 @@ fix with the best **measured** gain goes first. The combination is kept only if 
 Why: the planner overestimates partition gains (trust score in `RESULTS.md`).
 
 `kind` is `index`, `partition`, `rewrite`, or `none` (masked SQL could not be parsed).
-How it works: the agent ranks all candidates (`ai/candidates.py`), then the top 3 are
-really simulated with `cost_fn` (4 calls per query) and sorted by measured reward.
+How it works: the agent ranks all candidates (`ai/candidates.py`), then the top 3
+index/partition options are really simulated with `cost_fn` and sorted by measured reward.
+Rewrites have their **own lane**: every rewrite that applies is checked too (timed, same
+results), so a rewrite can never push an index or partition out of the top 3. Rewrite rules
+(`ai/rewrite.py`): correlated subquery -> join, NOT IN -> NOT EXISTS, function on a column ->
+range, and a join used only as a filter -> EXISTS (needs a unique join key; the same-results
+check decides).
 Fixes measured as no better are dropped; unsimulated ones stay, flagged `rule_only`.
 
 **Trained agent** — `ai/rl_agent.json` (structural features only, no names): trained on
