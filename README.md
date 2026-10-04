@@ -10,7 +10,7 @@ Needs Docker Desktop (running) and Python 3.12.
 docker compose up -d                                   # Postgres 16 + HypoPG + pg_stat_statements
 py -3.12 -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
-.venv\Scripts\python db\generate.py                    # 1M orders in ~5 s (pass 5000000 for a bigger demo)
+.venv\Scripts\python db\generate.py                    # 1M orders in ~5 s; the demo uses 5000000
 .venv\Scripts\python db\queries.py                     # the 11 slow queries: cost + real time
 .venv\Scripts\python pipeline.py                       # end-to-end self-test
 .venv\Scripts\streamlit run app\dashboard.py           # the dashboard
@@ -47,7 +47,8 @@ pipeline.py analyze(question) -> dict : wires everything, enforces the privacy b
 | DB generator, 11 slow queries, workload generator, ingestion | working (merged) |
 | sandbox: HypoPG cost, partition simulation, timing, write/storage impact | working (merged) |
 | privacy: masking, leak check | working (merged) |
-| ai (RL, GNN, rewrites), app (LLM, dashboard) | in progress on their branches; master has stubs |
+| ai: RL agent, GNN, rewrite rules | merged (GNN as second opinion; GNN-generated reason pending) |
+| app: local LLM, dashboard, Approve flow | merged |
 
 ## Privacy: what the AI can and cannot see
 
@@ -112,4 +113,21 @@ pattern (email, card number). Other sensitive formats need their own pattern.
 - Data is synthetic (seeded, reproducible); no real customer data is used.
 
 ## Results
-_To be filled in: before/after cost and time per query, write-latency and storage impact, leak-check result._
+_Full per-query results: [ai/RESULTS.md](ai/RESULTS.md). Fill in the final table after the last merge._
+
+### Simulation accuracy: estimate vs real (`python -m db.accuracy`, 5M orders)
+The PS asks that simulated storage and write-latency impact "closely mirror actual"
+metrics. We checked HypoPG's estimates against the real index built on the sandbox copy:
+
+| Query | Index | HypoPG size estimate | Real size | Error | Extra write per row |
+|---|---|---|---|---|---|
+| q01 | `orders (customer_id)` | 116.1 MB | 35.6 MB | +226% | ~2.1 µs |
+| q09 / q10 | `orders (product_id)` | 116.1 MB | 35.4 MB | +228% | ~2.2–3.2 µs |
+| q11 | `orders (region_id, order_date)` | 145.2 MB | 35.9 MB | +304% | ~2.6 µs |
+
+- **HypoPG overestimates index size 3–4×.** Real Postgres B-tree indexes deduplicate
+  repeated values; HypoPG's estimate does not. So we use HypoPG only to *rank* fixes
+  quickly, and the dashboard reports the **real size**, measured by building the index
+  on the sandbox copy (`sandbox.index_size_bytes`), never on live tables.
+- **Write latency is small but noisy:** ~2–3 µs extra per inserted row, with a
+  run-to-run spread of up to ~2.4 µs. Report it as an approximate range, not an exact value.

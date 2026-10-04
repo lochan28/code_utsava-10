@@ -107,6 +107,17 @@ requests). They are additions only — nothing existing was renamed or removed.
   **(v2)** Works on any text, including P3's `reason`, `why_not`, `summary`.
 - `verify_no_leak(text, mapping) -> bool` — True if no raw name/value remains.
 
+`privacy/tts.py` (Person 2)
+- `generate_safe_audio(explanation_text: str) -> Path | bytes`
+  * Input: Human-readable explanation string (must pass leak check)
+  * Output: Path to cached .mp3 audio file or raw audio bytes
+  * Behavior: Returns cached audio if text was previously synthesized; raises Error on data leak.
+  * **Offline engine only** (e.g. `pyttsx3` or Piper). Never an online TTS service
+    such as gTTS: the explanation must not leave the laptop.
+  * **Always returns a `Path`** (agreed day 2), so callers handle one type. The
+    `| bytes` in the signature above is kept only for the record.
+  * The audio cache folder is **git-ignored**; never commit generated audio.
+
 Privacy notes (put in README): numbered placeholders reveal that two values are
 EQUAL, never what they are. Row counts, selectivities and result checksums are
 metadata (numbers / hashes), not data.
@@ -121,14 +132,30 @@ metadata (numbers / hashes), not data.
   masked_index_sqls) -> float` is handed in by the pipeline; it un-masks
   privately and calls `db.sandbox.cost`, so the AI only ever gets a number back.
   **(v2)** Full signature: `recommend(masked_sql, masked_plan, cost_fn, stats=None,
-  time_fn=None, agent=None, column_types=None)`. Extra keys per recommendation
+  time_fn=None, agent=None, column_types=None, write_fn=None)`. Extra keys per recommendation
   (`improvement_pct`, `verified_by`, `novelty`, `why_not`, `summary`, ...) are
   documented in `ai/README.md`. `stats` arrives in the `table_stats` shape above
   (masked): use `eq_sel` and `range_sel` directly. If a column is missing from
   `range_sel`, fall back to estimating from the masked plan + `stats["rows"]`.
-- **(v2) OPEN — needs a team decision:** the PS asks for a *GNN-generated* reason,
-  but `find_bottleneck` defaults to the `rules` path (GNN not yet validated).
-  Decide how the GNN is shown in the demo before the final merge.
+  **(v3)** Optional keys per recommendation (all may be absent): `measured_gain_pct`,
+  `planner_gain_pct`, `measured_ms_before`, `measured_ms_after`, `timing_note`,
+  `combined`, `rejected_fixes`.
+- **(v3) DECIDED — GNN-generated reason, rules check the pick.** The PS requires
+  a *GNN-generated* reason for every fix, so:
+  - The GNN scores every plan step; the reason is written from its top pick,
+    confidence and each step's share (e.g. "GNN: Seq Scan on t_1c1, ~92% of the plan").
+  - The rules check EVERY GNN pick (not only rule-flagged cases). Same step →
+    GNN reason, "rule check agrees". Different step → the rules' pick wins and the
+    reason says "rule check overrode the GNN". Accuracy therefore equals the rules'
+    (59/59), and the reason is always GNN-generated.
+  - P3 reports agree / override counts on the test plans (README / RESULTS.md).
+  - P3 may also train a GNN that predicts each step's share of the time.
+  - `ai/gnn_weights.pt` (11 KB, learned numbers only, no data) IS committed so the
+    demo is reproducible; re-commit it after every retraining.
+- **(v3)** `EXISTS` join rewrite allowed (low priority); like every rewrite it must
+  pass the `checked_run` same-rows checksum check.
+- **(v3)** P1: self-test table comparing HypoPG's estimated index size and write
+  latency with the REAL built index on the sandbox ("closely mirror actual").
 
 `app/llm.py` (Person 4): `explain(masked_result: dict) -> str` via Ollama
 (`qwen2.5:7b`, `keep_alive=-1`), given ONLY masked data.
@@ -142,15 +169,22 @@ write_latency_ms, storage_bytes, explanation, deploy_sql, leak_check`.
 **(v2)** `analyze()` passes into `rl.recommend()`:
 - `cost_fn(masked_sql, masked_actions)` — un-mask both, call `sandbox.cost`
   (handles indexes AND the partition action; lets `ValueError` propagate).
-- `time_fn(masked_sql)` — un-mask, call `sandbox.checked_run`, return its dict.
+- `time_fn(masked_sql, actions=[])` — **(v3)** un-mask both, call
+  `sandbox.checked_run(unmask(sql), [unmask(a) for a in actions])`, return its dict
+  (`actions` may include the partition action). Without it, fixes show
+  "estimated by the planner (not timed)".
+- **(v3)** `write_fn(masked_index_sql)` — un-mask, call
+  `sandbox.measure_write_latency`. Index fixes ONLY, never partitions.
 - `stats = mask.mask_stats(sandbox.table_stats(real_sql), mapping)` — pass the
   REAL query so `range_sel` is filled.
 - `column_types = mask.column_types(mapping)`
 
 ## Merge order (lead merges into master)
 1. P2 masker (unblocks everyone)  2. P1 sandbox (+ `checked_run`, `table_stats`,
-partition)  3. P3 ai (commit README + `gnn_weights.pt` + `rl_agent.json` first)
+partition)  3. P3 ai (commit README, `rl_agent.json` and `gnn_weights.pt` first)
 4. P4 app + pipeline.  After each merge, everyone runs `git merge master`.
+(Day 1: P4's `app` was merged before P3's `ai`. The `ai` merge keeps P4's
+`pipeline.py`; `ai/` must not change `pipeline.py`.)
 
 ## Shared database — careful
 One Postgres in Docker serves all four chats.

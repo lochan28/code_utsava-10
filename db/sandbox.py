@@ -22,7 +22,7 @@ from sqlglot import exp
 STATEMENT_TIMEOUT_S = 30   # Safety net: any single SQL call slower than this is
                            # cancelled. EXPLAIN without ANALYZE never runs the
                            # query, so cost() normally takes milliseconds.
-TIMING_REPEATS = 5         # timed_run() runs the query this many times (after one
+TIMING_REPEATS = 9         # timed_run() runs the query this many times (after one
                            # warm-up run) and reports the middle value. More =
                            # steadier numbers but slower; 3-10 is sensible.
 WRITE_TEST_ROWS = 10000    # rows inserted per write-latency batch. More = steadier
