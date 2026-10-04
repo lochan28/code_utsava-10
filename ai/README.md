@@ -72,13 +72,13 @@ Returns recommendations, best first. Contract keys: `kind`, `action`, `cost_befo
 | `novelty` | `seen query shape` or `unseen shape (lower confidence)` vs the agent's training |
 | `agent_score` | the agent's predicted reward before simulation |
 | rewrites only | `same_results`, `time_before_ms`, `time_after_ms`, `speedup`, `verify_note`, `rule_label` |
-| index / partition winner | `planner_gain_pct` (planner estimate), `measured_ms_before`, `measured_ms_after`, `measured_gain_pct` (median of 5 sandbox runs, `TIME_WINNER_RUNS`; `None` if not timed), `timing_note`, `combined` (True = partition + index together, `action` is `"PARTITION ...; CREATE INDEX ..."`); index fixes may also carry `write_latency` (`write_fn`) |
+| index / partition winner | `planner_gain_pct` (planner estimate), `measured_ms_before`, `measured_ms_after`, `measured_gain_pct` (median of 5 sandbox runs, `TIME_WINNER_RUNS`; `None` if not timed), `timing_note`, `combined` (True = partition + index together, `action` is `"PARTITION ...; CREATE INDEX ..."`); `rewrite_sql` + `rewrite_rule` + `combined_rewrite` (the fix was timed TOGETHER with a same-result query rewrite: deploy `action` AND replace the query with `rewrite_sql`); index fixes may also carry `write_latency` (`write_fn`) |
 | first item only | `why_not` (why the best alternative was rejected), `summary` (whole bundle in one sentence: **measured gain first, planner estimate second**, e.g. "59% faster in measured sandbox time (planner estimated 92%)"; without timing: "estimated by the planner (not timed)"), `rejected_fixes` (fixes dropped because the timed run returned different results) |
 
 The agent's ranking and reward always use planner cost (`cost_fn`); the planner shortlists.
 When `time_fn` accepts `actions` (below), every verified index/partition fix is then **timed**,
 plus partition + best index **combined** (costed and timed on the partitioned copy), and the
-fix with the best **measured** gain goes first. The combination is kept only if it wins.
+fix with the best **measured** gain goes first. The combination is kept only if it wins. The best fix is also timed together with every rewrite that returned the same results (e.g. q11: partition + index + join rewrite); that is offered only if it measures fastest.
 Why: the planner overestimates partition gains (trust score in `RESULTS.md`).
 
 `kind` is `index`, `partition`, `rewrite`, or `none` (masked SQL could not be parsed).
