@@ -14,7 +14,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # so "import pipeline" works
 import pipeline  # noqa: E402
-from app import approve, charts, demo_mode, llm, sample_data, tradeoff  # noqa: E402
+from app import approve, charts, demo_mode, llm, sample_data, tradeoff, voice  # noqa: E402
 from app.ui_helpers import (  # noqa: E402
     ai_inputs_line, bottleneck_items, bottleneck_node_id, confidence_counts, confidence_strip,
     evidence_items, gnn_top3_rows, match_line, md_safe, novelty_badge, plan_tree_text, sort_recommendations,
@@ -333,6 +333,20 @@ def render_approve(r, key):
 
 
 # ------------------------------------------------------------------
+# The spoken debrief: a button; any problem falls back to the text above, quietly
+# ------------------------------------------------------------------
+def render_debrief(r, key):
+    if st.button("Play debrief", key=f"debrief_{key}", icon=":material/volume_up:"):
+        with st.spinner("Preparing the audio..."):
+            st.session_state.debriefs[key] = voice.debrief_audio(r)
+    path, note = st.session_state.debriefs.get(key, (None, None))
+    if path:
+        st.audio(path)
+    elif note:
+        st.caption(note)
+
+
+# ------------------------------------------------------------------
 # One analysis, shown inside an assistant chat message
 # ------------------------------------------------------------------
 def render_result(r, key=None, approvable=False):
@@ -361,6 +375,7 @@ def render_result(r, key=None, approvable=False):
         st.markdown("#### Explanation")
         st.markdown(md_safe(r["explanation"]))
     if approvable:
+        render_debrief(r, key)
         render_approve(r, key)
 
 
@@ -369,11 +384,25 @@ def render_result(r, key=None, approvable=False):
 # ------------------------------------------------------------------
 if "approved" not in st.session_state:
     st.session_state.approved = set()     # which analyses the admin has approved (only decides what to SHOW)
+if "debriefs" not in st.session_state:
+    st.session_state.debriefs = {}    # analysis number -> (audio path or None, note or None)
 if "history" not in st.session_state:
     st.session_state.history = []     # [{"question", "result" or None, "error" or None}]
 
+# Ask by voice. The recording goes to ElevenLabs as raw audio; only its transcript enters the pipeline.
+voice_question = None
+with st.sidebar:
+    st.markdown("**Ask by voice**")
+    clip = st.audio_input("Record a question", key="voice_clip", label_visibility="collapsed")
+    st.caption("The recording is sent to ElevenLabs to be turned into text. Don't dictate customer data.")
+    if clip is not None:
+        with st.spinner("Turning your recording into text..."):
+            voice_question, voice_note = voice.transcribe_once(clip.getvalue(), st.session_state)
+        if voice_note:
+            st.caption(voice_note)
+
 question = st.chat_input("Ask about a slow report, e.g. 'Why is the weekly sales report slow?' "
-                         "or paste a SELECT")
+                         "or paste a SELECT") or voice_question
 if question:
     entry = {"question": question, "result": None, "error": None}
     with st.spinner("Analysing: masking, finding the bottleneck, simulating and timing fixes... "
