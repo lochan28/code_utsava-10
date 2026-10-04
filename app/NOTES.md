@@ -140,6 +140,19 @@ functions first. **Person 1: please use a restricted role.**
 - It only builds text (`app/approve.py`). `app/test_approve.py` rigs the sandbox, every database
   connection and the decoder to explode if the page touches them.
 
+## 10b. Voice (online, ElevenLabs via `privacy/stt.py` and `privacy/tts.py`; the lead's decision)
+- **Ask by voice** (sidebar `st.audio_input`): the recording goes to ElevenLabs as RAW audio, which cannot be leak-checked,
+  so the page says "don't dictate customer data". Only the transcript enters `analyze()`, handled exactly like a typed
+  question (never in a prompt, the log or a cache key). Each distinct recording is handled ONCE (the widget keeps its value
+  and the page reruns on every click, so `voice.transcribe_once` remembers the hash of the last one).
+- **Play debrief** (button under each analysis): `tts.speak_debrief(voice.masked_view(result))`. `masked_view` removes
+  `deploy_sql`, `deploy_scripts`, `deploy_rewrites` and `explanation_unmasked` first, so nothing that holds real values
+  can ever be read by the speaker. `debrief_text` only says the kind of fix and numbers; `speak()` leak-checks it again.
+- **Fail soft:** `RuntimeError` (no key, HTTP error), `ValueError` (blocked by the leak check, empty or too big) and `OSError`
+  (no network) all give a small gray caption ("... the text above has the same information") and no red box. Nothing raises.
+- Works in Demo mode too (the recording supplies the answer; the voice parts still need the network and fall back to text).
+- Keys: `ELEVENLABS_API_KEY` (or the separate `ELEVENLABS_TTS_API_KEY` / `ELEVENLABS_STT_API_KEY`), read from the environment.
+
 ## 11. Tests (run from the project folder; none need Ollama)
 ```
 .venv/Scripts/python -m app.test_privacy          # privacy + guard
@@ -156,6 +169,7 @@ functions first. **Person 1: please use a restricted role.**
 .venv/Scripts/python -m app.test_ai_fields        # the page shows ai/'s measured fields, rejected and combined fixes
 .venv/Scripts/python -m app.test_gnn_fields       # GNN second opinion, top-3 chart, rewrite rule label
 .venv/Scripts/python -m app.test_rewrite_fix      # a fix timed with a query rewrite: script, card, ai/'s write latency
+.venv/Scripts/python -m app.test_voice            # spoken question and debrief (mocked: no network), leak tests
 ```
 (`test_restore` and `test_approve` use the real masker and read-only sandbox runs, so they need the Docker database.)
 
