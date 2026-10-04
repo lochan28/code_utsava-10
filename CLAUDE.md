@@ -107,6 +107,17 @@ requests). They are additions only — nothing existing was renamed or removed.
   **(v2)** Works on any text, including P3's `reason`, `why_not`, `summary`.
 - `verify_no_leak(text, mapping) -> bool` — True if no raw name/value remains.
 
+`privacy/tts.py` (Person 2)
+- `generate_safe_audio(explanation_text: str) -> Path | bytes`
+  * Input: Human-readable explanation string (must pass leak check)
+  * Output: Path to cached .mp3 audio file or raw audio bytes
+  * Behavior: Returns cached audio if text was previously synthesized; raises Error on data leak.
+  * **Offline engine only** (e.g. `pyttsx3` or Piper). Never an online TTS service
+    such as gTTS: the explanation must not leave the laptop.
+  * **Always returns a `Path`** (agreed day 2), so callers handle one type. The
+    `| bytes` in the signature above is kept only for the record.
+  * The audio cache folder is **git-ignored**; never commit generated audio.
+
 Privacy notes (put in README): numbered placeholders reveal that two values are
 EQUAL, never what they are. Row counts, selectivities and result checksums are
 metadata (numbers / hashes), not data.
