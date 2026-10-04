@@ -215,8 +215,9 @@ def evidence_items(rec):
         items.append(("planner estimate", f"{rec['planner_gain_pct']:.0f}%"))
     if _num(rec.get("speedup")):
         items.append(("speedup", f"{rec['speedup']:.1f}x"))
-    if isinstance(rec.get("rule_label"), str) and rec["rule_label"]:
-        items.append(("rewrite rule", rec["rule_label"]))
+    rule = next((rec[k] for k in ("rewrite_rule", "rule_label") if isinstance(rec.get(k), str) and rec[k]), None)
+    if rule:
+        items.append(("rewrite rule", rule))
     if isinstance(rec.get("verify_note"), str) and rec["verify_note"]:
         items.append(("check", rec["verify_note"]))
     return items

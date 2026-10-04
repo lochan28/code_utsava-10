@@ -120,7 +120,9 @@ def resolve(r):
     if t.get("kind") == "rewrite":                   # a rewrite builds no index: nothing to pay
         out["write_note"] = out["storage_note"] = NO_INDEX_NOTE
     else:
-        out["write"] = _own_or_inherited(t, r, "write_latency_ms", inherit)
+        wl = t.get("write_latency")        # ai/'s own measurement for this fix (an estimate is not used)
+        own = wl["delta_ms_per_row"] if isinstance(wl, dict) and wl.get("source") == "measured"             and ok(wl.get("delta_ms_per_row")) else None
+        out["write"] = own if own is not None else _own_or_inherited(t, r, "write_latency_ms", inherit)
         out["storage"] = _own_or_inherited(t, r, "storage_bytes", inherit)
     return out
 
