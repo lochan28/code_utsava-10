@@ -71,7 +71,10 @@ def _connection():
     table on it, whatever SQL text arrives - HypoPG still works."""
     global _conn
     if _conn is None or _conn.closed:
-        _conn = psycopg.connect(DSN, autocommit=True)
+        # prepare_threshold=None: never turn a query into a server-side prepared
+        # statement. psycopg does that after 5 identical runs, which breaks
+        # EXPLAIN (GENERIC_PLAN) on queries with $1, $2 placeholders.
+        _conn = psycopg.connect(DSN, autocommit=True, prepare_threshold=None)
         _conn.execute(f"SET statement_timeout = '{STATEMENT_TIMEOUT_S}s'")
         _conn.execute("SET default_transaction_read_only = on")
     return _conn
@@ -95,7 +98,7 @@ def _sandbox_connection():
     Used for real index builds; every experiment is rolled back."""
     global _sandbox_conn
     if _sandbox_conn is None or _sandbox_conn.closed:
-        _sandbox_conn = psycopg.connect(DSN)
+        _sandbox_conn = psycopg.connect(DSN, prepare_threshold=None)   # see _connection()
         _sandbox_conn.execute(f"SET statement_timeout = '{STATEMENT_TIMEOUT_S}s'")
         _sandbox_conn.execute(f"SET search_path = {SANDBOX_SCHEMA}")
         _sandbox_conn.commit()
