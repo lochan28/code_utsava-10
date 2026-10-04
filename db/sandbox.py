@@ -36,9 +36,10 @@ WORKLOAD_REPEATS = 3       # run_workload() runs each known slow query this many
 # ============================================================
 # FIXED SETTINGS - must match docker-compose.yml
 # ============================================================
-DSN = "postgresql://tuner:tuner@localhost:5432/sales"
+DATABASE = "sales"           # which database every function works on; switch with
+                             # use_database("retail") for the real-data check
+DSN = f"postgresql://tuner:tuner@localhost:5432/{DATABASE}"
 SANDBOX_SCHEMA = "sandbox"   # copies for real timing / write tests live here
-SANDBOX_TABLES = ["regions", "customers", "products", "orders"]
 SANDBOX_LOCK_ID = 4242       # advisory lock: one sandbox experiment at a time,
                              # even when several team chats call timed_run()
 
@@ -58,11 +59,29 @@ _conn = None
 _sandbox_conn = None
 
 
+def use_database(name):
+    """Point every function in this module at another database in the same
+    container, e.g. "retail" (the real UCI dataset). Default is "sales".
+    The sandbox copies are made per database, so the two never mix."""
+    global DATABASE, DSN
+    _close_connections()
+    DATABASE, DSN = name, f"postgresql://tuner:tuner@localhost:5432/{name}"
+
+
+def _tables():
+    """The real tables of the current database (schema public)."""
+    return [t for (t,) in _connection().execute(
+        "SELECT table_name FROM information_schema.tables "
+        "WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY 1")]
+
+
 @atexit.register
 def _close_connections():
+    global _conn, _sandbox_conn
     for c in (_conn, _sandbox_conn):
         if c is not None and not c.closed:
             c.close()
+    _conn = _sandbox_conn = None
 
 
 def _connection():
@@ -71,7 +90,10 @@ def _connection():
     table on it, whatever SQL text arrives - HypoPG still works."""
     global _conn
     if _conn is None or _conn.closed:
-        _conn = psycopg.connect(DSN, autocommit=True)
+        # prepare_threshold=None: never turn a query into a server-side prepared
+        # statement. psycopg does that after 5 identical runs, which breaks
+        # EXPLAIN (GENERIC_PLAN) on queries with $1, $2 placeholders.
+        _conn = psycopg.connect(DSN, autocommit=True, prepare_threshold=None)
         _conn.execute(f"SET statement_timeout = '{STATEMENT_TIMEOUT_S}s'")
         _conn.execute("SET default_transaction_read_only = on")
     return _conn
@@ -95,7 +117,7 @@ def _sandbox_connection():
     Used for real index builds; every experiment is rolled back."""
     global _sandbox_conn
     if _sandbox_conn is None or _sandbox_conn.closed:
-        _sandbox_conn = psycopg.connect(DSN)
+        _sandbox_conn = psycopg.connect(DSN, prepare_threshold=None)   # see _connection()
         _sandbox_conn.execute(f"SET statement_timeout = '{STATEMENT_TIMEOUT_S}s'")
         _sandbox_conn.execute(f"SET search_path = {SANDBOX_SCHEMA}")
         _sandbox_conn.commit()
@@ -110,7 +132,7 @@ def ensure_sandbox():
     try:
         conn.execute("SELECT pg_advisory_xact_lock(%s)", (SANDBOX_LOCK_ID,))
         conn.execute(f"CREATE SCHEMA IF NOT EXISTS {SANDBOX_SCHEMA}")
-        for t in SANDBOX_TABLES:
+        for t in _tables():
             if conn.execute("SELECT to_regclass(%s)", (f"{SANDBOX_SCHEMA}.{t}",)).fetchone()[0]:
                 continue
             conn.execute(f"CREATE TABLE {SANDBOX_SCHEMA}.{t} (LIKE public.{t} INCLUDING ALL)")
@@ -165,7 +187,7 @@ def ensure_partitioned_copy(table, column):
             conn.execute(f"ALTER TABLE {schema}.{table} ADD PRIMARY KEY ({', '.join(key)})")
         conn.execute(f"INSERT INTO {schema}.{table} SELECT * FROM {SANDBOX_SCHEMA}.{table}")
         conn.execute(f"ANALYZE {schema}.{table}")
-        for other in SANDBOX_TABLES:
+        for other in _tables():
             if other != table:
                 conn.execute(f"CREATE VIEW {schema}.{other} AS SELECT * FROM {SANDBOX_SCHEMA}.{other}")
         conn.commit()
@@ -296,6 +318,8 @@ def measure_write_latency(index_sql):
     """
     _check_sandbox_index(index_sql)
     table = _INDEX_SQL.match(index_sql)["table"]
+    if table not in _NEW_ROWS:
+        raise ValueError(f"No test-row recipe for table {table!r} (write test supports {sorted(_NEW_ROWS)})")
     insert = (f"EXPLAIN (ANALYZE, TIMING OFF, FORMAT JSON) "
               f"INSERT INTO {table} SELECT * FROM new_rows")
     ensure_sandbox()
