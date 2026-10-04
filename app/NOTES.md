@@ -94,8 +94,9 @@ Shown for the **top pick** (first by trust: measured, simulated, rule-only, unve
 - If every fix is unsafe, only a warning is shown: no numbers, no charts, no green.
 - When a MEASURED time exists it is the headline (chart + the 50% target check). The planner estimate
   moves into a collapsed expander "Planner estimate (can disagree with measured time)". If the two point
-  in opposite directions the estimate gets a neutral amber note, not a red WORSE. With no measured time
-  the page is as before (cost estimate only).
+  in opposite directions the estimate gets a neutral amber note, not a red WORSE. While a measured time exists the
+  planner box shows NO target marker (met / below / worse) and gray bars: only the measured headline carries the 50%
+  target. With no measured time the page is as before (cost estimate only, with its marker).
 - **Everything on the stubs is fake** (cost 19437 -> 812, 27 -> 3 ms, 0.002 ms, 22,000,000 bytes). The numbers
   become real when Persons 1 and 3 deliver. Use the sidebar sample (4 variants) to see every state.
 
@@ -140,6 +141,19 @@ functions first. **Person 1: please use a restricted role.**
 - It only builds text (`app/approve.py`). `app/test_approve.py` rigs the sandbox, every database
   connection and the decoder to explode if the page touches them.
 
+## 10b. Voice (online, ElevenLabs via `privacy/stt.py` and `privacy/tts.py`; the lead's decision)
+- **Ask by voice** (sidebar `st.audio_input`): the recording goes to ElevenLabs as RAW audio, which cannot be leak-checked,
+  so the page says "don't dictate customer data". Only the transcript enters `analyze()`, handled exactly like a typed
+  question (never in a prompt, the log or a cache key). Each distinct recording is handled ONCE (the widget keeps its value
+  and the page reruns on every click, so `voice.transcribe_once` remembers the hash of the last one).
+- **Play debrief** (button under each analysis): `tts.speak_debrief(voice.masked_view(result))`. `masked_view` removes
+  `deploy_sql`, `deploy_scripts`, `deploy_rewrites` and `explanation_unmasked` first, so nothing that holds real values
+  can ever be read by the speaker. `debrief_text` only says the kind of fix and numbers; `speak()` leak-checks it again.
+- **Fail soft:** `RuntimeError` (no key, HTTP error), `ValueError` (blocked by the leak check, empty or too big) and `OSError`
+  (no network) all give a small gray caption ("... the text above has the same information") and no red box. Nothing raises.
+- Works in Demo mode too (the recording supplies the answer; the voice parts still need the network and fall back to text).
+- Keys: `ELEVENLABS_API_KEY` (or the separate `ELEVENLABS_TTS_API_KEY` / `ELEVENLABS_STT_API_KEY`), read from the environment.
+
 ## 11. Tests (run from the project folder; none need Ollama)
 ```
 .venv/Scripts/python -m app.test_privacy          # privacy + guard
@@ -156,6 +170,8 @@ functions first. **Person 1: please use a restricted role.**
 .venv/Scripts/python -m app.test_ai_fields        # the page shows ai/'s measured fields, rejected and combined fixes
 .venv/Scripts/python -m app.test_gnn_fields       # GNN second opinion, top-3 chart, rewrite rule label
 .venv/Scripts/python -m app.test_rewrite_fix      # a fix timed with a query rewrite: script, card, ai/'s write latency
+.venv/Scripts/python -m app.test_voice            # spoken question and debrief (mocked: no network), leak tests
+.venv/Scripts/python -m app.test_explanation      # the explanation describes the page's top pick, measured numbers first
 ```
 (`test_restore` and `test_approve` use the real masker and read-only sandbox runs, so they need the Docker database.)
 
@@ -174,10 +190,21 @@ functions first. **Person 1: please use a restricted role.**
   the page's top pick (best evidence tier) is not always that one, so read per-recommendation fields
   (`improvement_pct`, `verified_by`) when you need the top pick's own numbers.
 
+- **One analysis at a time.** `db/sandbox.py` keeps one shared, global writable connection, and an analysis changes its
+  state. Streamlit runs each browser session (and a page refresh during a long analysis) in its own thread, so two analyses
+  at once made the second one's index builds fail with `ReadOnlySqlTransaction` and `time_fn` failed for BOTH (the lead's
+  demo bug; reproduced with two threads). `pipeline.analyze()` now takes a process-wide lock, so a second analysis waits.
+- **The explanation describes the page's top pick.** The pipeline lists the top pick first; the prompt marks fix 1 as the BEST
+  FIX and the others as alternatives, with the MEASURED numbers first and the planner estimate second (same order as the page).
+  The template fallback does the same. An unsafe fix is never called the best one.
+- **Every answer says where it came from:** Demo-mode answers carry the "recorded results" banner, live answers a "LIVE
+  analysis" line (the chat history survives switching Demo mode, so the two can sit on one page).
+
 ## 13. Asks for other people
 - **Lead:** merge the `ai` branch into master (master still has the 3-argument stub `rl.recommend`), then re-run
   `python -m app.record_demo` so the Demo mode recording matches what is merged.
 - **Person 3:** `ai/verify.py` already reads `results_match` (done). `stats` arrives with `eq_sel` filled in. `pipeline.py` stays Person 4's (the leak checks are in `analyze()`). `time_fn(masked_sql, actions)`, `cost_fn` (costs the SQL it is given) and `write_fn` are wired. The ai_inputs words "not supported by ai/ yet" only appear when `recommend()` really lacks the parameter. A fix that is dropped should keep going into `rejected_fixes` as masked text.
+- **Person 1:** please give the sandbox one connection per thread (the shared global connections are not thread-safe); then the lock in `pipeline.analyze()` can go.
 - **Person 2:** `mask_query` turns an existing `$1` into `$$1` and then flags it as a leak (any logged query or pasted SQL that already has `$n`). Fix: leave existing `$n` placeholders alone.
 - (4c) `table_stats` is now called with the SQL so Person 3 gets `range_sel`; `PARTITION ... MONTHLY` is passed to `cost`.
 - **Person 1 (db/sandbox.py):** pasted SQL reaches `get_plan()`, `cost()` and `checked_run()`. They

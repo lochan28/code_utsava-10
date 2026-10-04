@@ -70,6 +70,20 @@ def test_a_combined_fix_shows_both_steps_and_a_badge():
     assert "combined fix" in page_text(at)
 
 
+NO_FIX_TEXT = "No fix text (the masked SQL could not be analysed)."
+
+
+def test_no_fix_text_note_shows_only_when_a_fix_has_no_action():
+    def notes(**extra):
+        return [c.value for c in run_page(with_ai(**extra)).caption if c.value == NO_FIX_TEXT]
+    assert notes() == []                                                              # a normal fix: never
+    assert notes(rewrite_sql="SELECT 1", rewrite_rule="x") == []                      # a fix with a rewrite: never
+    assert notes(kind="partition", action="PARTITION t BY RANGE (d) MONTHLY; CREATE INDEX ON t (a)", combined=True) == []
+    assert notes(action="") == [NO_FIX_TEXT] and notes(action=None) == [NO_FIX_TEXT] and notes(action=7) == [NO_FIX_TEXT]
+    at = run_page(with_ai(action="", rewrite_sql="SELECT 1", rewrite_rule="x"))        # no action but a rewrite: both show
+    assert [c.value for c in at.caption].count(NO_FIX_TEXT) == 1 and "SELECT 1" in [c.value for c in at.code]
+
+
 def test_the_page_has_no_real_name_in_any_of_the_new_parts():
     text = page_text(run_page(with_ai(rejected_fixes=REJECTED))).lower()
     assert "rahul" not in text and "customers" not in text

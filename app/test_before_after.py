@@ -178,7 +178,7 @@ def test_page_full_data_charts_numbers_and_sources():
         assert source in caps, source
     assert caps.count("Source: measured on a sandbox copy") == 2      # write latency AND storage
     ok_, warn, err = verdicts(at)
-    assert len(ok_) == 2 and all("Meets the target: more than 50% improvement." == s for s in ok_) and not warn and not err
+    assert ok_ == ["Meets the target: more than 50% improvement."] and not warn and not err    # the headline only
     text = page_text(at)
     assert "You gain" in text and "71.8% faster (measured)" in text           # only the measured gain is the headline
     assert "lower estimated cost" not in text
@@ -250,10 +250,9 @@ def test_page_a_fix_that_makes_things_worse_is_red():
     ok_, warn, err = verdicts(at)
     print(f"      errors: {err}")
     assert ok_ == [] and warn == []
-    assert err == ["WORSE: this fix made the query SLOWER when measured.",          # the headline
-                   "WORSE: this fix is estimated to make the query MORE expensive."]
+    assert err == ["WORSE: this fix made the query SLOWER when measured."]           # the headline only: the planner box has no marker
     assert metrics_of(at)["Estimated cost improvement"] == "-30.0%" and metrics_of(at)["Measured time improvement"] == "-40.0%"
-    assert [c["after_color"] for c in charts_of(at)] == ["#d64545"] * 2  # literal red
+    assert [c["after_color"] for c in charts_of(at)] == ["#d64545", "#8a8f98"]   # time: literal red; planner estimate: gray
     text = page_text(at)
     assert ":red[40.0% SLOWER (measured, worse)]" in text and "HIGHER estimated cost" not in text   # measured only
     assert "Meets the target" not in text and "lower estimated cost" not in text
@@ -265,9 +264,9 @@ def test_page_target_marker_flips_at_exactly_50_percent():
     just_over = verdicts(run_page(index_result(cost=(200.0, 99.9), time=None)))       # 50.05%
     assert just_over[0] == ["Meets the target: more than 50% improvement."] and just_over[1] == []
     t_below = verdicts(run_page(index_result(time=(100.0, 50.0))))                    # time exactly 50%
-    assert len(t_below[0]) == 1 and t_below[1] == ["Below the 50% target."]           # cost met, time not
+    assert t_below[0] == [] and t_below[1] == ["Below the 50% target."]               # cost met, time not: the time decides
     t_over = verdicts(run_page(index_result(time=(100.0, 49.9))))
-    assert len(t_over[0]) == 2 and t_over[1] == []
+    assert t_over[0] == ["Meets the target: more than 50% improvement."] and t_over[1] == []
     assert charts_of(run_page(index_result(cost=(200.0, 100.0), time=None)))[0]["after_color"] == "#e0a030"  # literal amber
 
 
@@ -324,9 +323,9 @@ def test_sample_variants_each_show_the_right_state():
             ok_, warn, err = verdicts(at)
             expect[variant] = (len(charts_of(at)), len(ok_), sum(e.startswith("WORSE") for e in err))
         print(f"      (charts, green markers, WORSE markers) per variant: {expect}")
-        assert expect[sample_data.VARIANTS[0]] == (2, 2, 0)                    # rewrite on top: both met
-        assert expect[sample_data.VARIANTS[1]] == (2, 2, 0)
-        assert expect[sample_data.VARIANTS[2]] == (2, 0, 2)                    # worse: red, nothing green
+        assert expect[sample_data.VARIANTS[0]] == (2, 1, 0)                    # rewrite on top: the headline is met
+        assert expect[sample_data.VARIANTS[1]] == (2, 1, 0)
+        assert expect[sample_data.VARIANTS[2]] == (2, 0, 1)                    # worse: red headline, nothing green
         assert expect[sample_data.VARIANTS[3]] == (0, 0, 0)                    # only unsafe: no charts, no good news
         assert expect[sample_data.VARIANTS[4]] == (2, 1, 0)                    # planner says worse, measured faster: no red
 
@@ -346,6 +345,21 @@ def markers_in_order(at):
     skip = ("No evidence attached", "SAMPLE DATA")
     return [(e.type, e.value) for e in elements(at)
             if getattr(e, "type", "") in ("success", "warning", "error") and not e.value.startswith(skip)]
+
+
+def test_the_planner_box_has_no_target_marker_when_a_measured_time_exists_but_keeps_its_disagreement_note():
+    # measured exists: no success / warning / error about the TARGET inside the planner box, bars gray
+    at = run_page(index_result(cost=(19437.0, 812.0), time=(100.0, 60.0)))          # cost 96% (met), measured 40% (below)
+    box = [e for e in at.expander if e.label.startswith("Planner estimate")][0]
+    assert not box.success and not box.warning and not box.error
+    assert [c["after_color"] for c in charts_of(at)][1] == "#8a8f98"
+    # the amber disagreement note still shows (planner worse, measured faster)
+    at = run_page(index_result(cost=(100.0, 120.0), time=(100.0, 40.0)))
+    box = [e for e in at.expander if e.label.startswith("Planner estimate")][0]
+    assert [w.value.startswith("The planner's estimate points the other way") for w in box.warning] == [True]
+    # no measured time: the planner estimate keeps its marker, as before
+    at = run_page(index_result(cost=(19437.0, 812.0), time=None))
+    assert verdicts(at)[0] == ["Meets the target: more than 50% improvement."]
 
 
 def test_disagree_rule():
@@ -394,21 +408,19 @@ def test_page_planner_says_worse_but_measured_faster_is_an_amber_note_not_red():
     assert not any(kind == "success" for kind, _ in marks) and "points the other way" in marks[1][1]
 
 
-def test_page_when_both_say_worse_both_stay_red():
+def test_page_when_both_say_worse_the_headline_is_red_and_the_planner_box_has_no_marker():
     at = run_page(index_result(cost=(1000.0, 1300.0), time=(100.0, 140.0)))
-    assert [kind for kind, _ in markers_in_order(at)] == ["error", "error"]
+    assert [kind for kind, _ in markers_in_order(at)] == ["error"]               # the measured headline; no planner marker
     assert "points the other way" not in page_text(at)
 
 
 def test_page_target_check_uses_the_measured_improvement():
     at = run_page(index_result(cost=(19437.0, 812.0), time=(100.0, 60.0)))        # cost 96%, measured 40%
     marks = markers_in_order(at)
-    assert marks[0] == ("warning", "Below the 50% target.")               # the HEADLINE follows the stopwatch
-    assert marks[1] == ("success", "Meets the target: more than 50% improvement.")
+    assert marks == [("warning", "Below the 50% target.")]                # the HEADLINE follows the stopwatch; no planner marker
     at = run_page(index_result(cost=(100.0, 70.0), time=(100.0, 20.0)))           # cost 30%, measured 80%
     marks = markers_in_order(at)
-    assert marks[0] == ("success", "Meets the target: more than 50% improvement.")
-    assert marks[1] == ("warning", "Below the 50% target.")
+    assert marks == [("success", "Meets the target: more than 50% improvement.")]
 
 
 def test_page_tradeoff_shows_only_the_measured_gain_when_there_is_one():

@@ -78,11 +78,12 @@ Plan steps, most expensive first:
 
 Bottleneck: {bottleneck}
 
-Recommended fixes, best first:
+Recommended fixes (fix 1 is the BEST FIX):
 {recommendations}
 
-In 3 short sentences, for a non-expert: why the query is slow, what the best fix does,
-and the benefit. Plain words, no jargon."""
+In 3 short sentences, for a non-expert: why the query is slow, what the best fix (fix 1) does,
+and its benefit, using the numbers given for it (a measured gain counts more than a planner
+estimate). Never call another fix the best one. Do not mention fix numbers. Plain words, no jargon."""
 
 SAFE_TEXT = ("A fix was found, but the written explanation was withheld because it "
              "failed the privacy check. See the recommendation table instead.")
@@ -132,13 +133,33 @@ def _pct(before, after):
     return None
 
 
+def _is_number(x):
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and x == x
+
+
+def _gain_text(r):
+    """The benefit of one fix, in the same order as the page: a MEASURED gain first, the planner's
+    cost estimate second. Without a measured gain: the cost estimate alone, as before."""
+    pct = _pct(r.get("cost_before"), r.get("cost_after"))
+    planner = (f"planner estimate: cost {_num(r.get('cost_before'))} -> {_num(r.get('cost_after'))}" +
+               (f" ({pct}% lower)" if pct is not None else ""))
+    if _is_number(r.get("measured_gain_pct")):
+        times = (f" ({r['measured_ms_before']:,.0f} ms -> {r['measured_ms_after']:,.0f} ms)"
+                 if _is_number(r.get("measured_ms_before")) and _is_number(r.get("measured_ms_after")) else "")
+        return f"measured {r['measured_gain_pct']:.0f}% faster{times}; {planner}"
+    return planner
+
+
 def _rec_lines(recs):
+    """One line per fix. Fix 1 is the BEST FIX (the page's top pick: the pipeline lists it first);
+    the model must explain THAT one. An unsafe rewrite is never a top pick."""
     lines = []
     for i, r in enumerate(recs[:MAX_RECOMMENDATIONS], 1):
-        pct = _pct(r.get("cost_before"), r.get("cost_after"))
-        gain = f", cost {_num(r.get('cost_before'))} -> {_num(r.get('cost_after'))}" + \
-               (f" ({pct}% lower)" if pct is not None else "")
-        lines.append(f"{i}. [{r.get('kind', '?')}] {r.get('action', '?')}{gain}. "
+        if r.get("unsafe_rewrite"):
+            tag = "UNSAFE, returns different rows, do not recommend: "
+        else:
+            tag = "BEST FIX: " if i == 1 else "alternative: "
+        lines.append(f"{i}. {tag}[{r.get('kind', '?')}] {r.get('action', '?')}, {_gain_text(r)}. "
                      f"Reason: {r.get('reason', '?')}")
     return "\n".join(lines) or "(none)"
 
@@ -167,13 +188,21 @@ def template_explanation(masked_result):
     evidence = ", ".join(f"{k}={v}" for k, v in sorted(b.get("evidence", {}).items()))
     text = f"Why it is slow: {b.get('reason', 'the main cost could not be identified')}"
     text += f" (evidence: {evidence})." if evidence else "."
-    if recs:
+    if recs and recs[0].get("unsafe_rewrite"):
+        text += " No safe fix was found: every suggested fix returned different results."
+    elif recs:
         best = recs[0]
-        pct = _pct(best.get("cost_before"), best.get("cost_after"))
         text += f" Best fix: {best.get('action', '?')} - {best.get('reason', '')}"
-        if pct is not None:
-            text += (f" The planner's estimated cost drops from {_num(best.get('cost_before'))} "
-                     f"to {_num(best.get('cost_after'))}, about {pct}% lower.")
+        if _is_number(best.get("measured_gain_pct")):
+            text += f" Measured on a sandbox copy: {_gain_text(best).split('; ')[0].replace('measured ', '')}."
+            pct = _pct(best.get("cost_before"), best.get("cost_after"))
+            if pct is not None:
+                text += f" The planner's own estimate was {pct}% lower cost."
+        else:
+            pct = _pct(best.get("cost_before"), best.get("cost_after"))
+            if pct is not None:
+                text += (f" The planner's estimated cost drops from {_num(best.get('cost_before'))} "
+                         f"to {_num(best.get('cost_after'))}, about {pct}% lower.")
         if len(recs) > 1:
             text += f" {len(recs) - 1} other option(s) were also considered."
     return text

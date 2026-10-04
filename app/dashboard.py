@@ -14,7 +14,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # so "import pipeline" works
 import pipeline  # noqa: E402
-from app import approve, charts, demo_mode, llm, sample_data, tradeoff  # noqa: E402
+from app import approve, charts, demo_mode, llm, sample_data, tradeoff, voice  # noqa: E402
 from app.ui_helpers import (  # noqa: E402
     ai_inputs_line, bottleneck_items, bottleneck_node_id, confidence_counts, confidence_strip,
     evidence_items, gnn_top3_rows, match_line, md_safe, novelty_badge, plan_tree_text, sort_recommendations,
@@ -124,18 +124,19 @@ def render_rec(rec, top):
                 st.badge("top pick", icon=":material/star:", color="green")
         with c_fix:
             action = rec.get("action")
-            if isinstance(action, str) and action.strip() and rec.get("combined"):
+            has_action = isinstance(action, str) and bool(action.strip())
+            if has_action and rec.get("combined"):
                 for number, step in enumerate(action.split("; "), 1):      # a combined fix: show BOTH steps
                     st.caption(f"Step {number} of 2" if number <= 2 else f"Step {number}")
                     st.code(step, language="sql")
-            elif isinstance(action, str) and action.strip():
+            elif has_action:
                 st.code(action, language="sql")
+            else:
+                st.caption("No fix text (the masked SQL could not be analysed).")
             if isinstance(rec.get("rewrite_sql"), str) and rec["rewrite_sql"].strip():     # timed together with the fix
                 rule = rec.get("rewrite_rule") if isinstance(rec.get("rewrite_rule"), str) else ""
                 st.caption("Also rewrite the query" + (f" ({md_safe(rule)})" if rule else "") + ":")
                 st.code(rec["rewrite_sql"], language="sql")
-            else:
-                st.caption("No fix text (the masked SQL could not be analysed).")
         with c_reason:
             reason = rec.get("reason")
             st.markdown(md_safe(reason) if isinstance(reason, str) and reason else "No reason given.")
@@ -191,8 +192,9 @@ def target_marker(status, worse_text):
 
 
 def render_cost_panel(c, time=None):
-    """The planner's estimate. If a MEASURED time exists and says the opposite, the estimate is
-    not shown as a red failure: a neutral amber note says to trust the measurement."""
+    """The planner's estimate. If a MEASURED time exists, the 50% target marker is NOT shown here (the
+    measured headline carries it) and the bars are gray; if the measurement says the opposite, a neutral
+    amber note says to trust it."""
     with st.container(border=True):
         st.markdown("**Planner cost** · the planner's estimate, not a stopwatch")
         if c is None:
@@ -204,10 +206,11 @@ def render_cost_panel(c, time=None):
             st.warning("The planner's estimate points the other way from the measured time. Trust the "
                        "measured time: planner estimates are often unreliable, especially for rewrites.",
                        icon=":material/info:")
-        else:
+        elif time is None:                 # a measured time exists -> it alone says met / below / worse
             target_marker(c["status"], "WORSE: this fix is estimated to make the query MORE expensive.")
         st.altair_chart(charts.before_after_chart(c["before"], c["after"], "planner cost units (estimate)",
-                                                  status="none" if opposite else c["status"]), width="stretch")
+                                                  status="none" if (opposite or time is not None) else c["status"]),
+                        width="stretch")
         st.caption(f"Source: {c['source']}")
 
 
@@ -333,6 +336,20 @@ def render_approve(r, key):
 
 
 # ------------------------------------------------------------------
+# The spoken debrief: a button; any problem falls back to the text above, quietly
+# ------------------------------------------------------------------
+def render_debrief(r, key):
+    if st.button("Play debrief", key=f"debrief_{key}", icon=":material/volume_up:"):
+        with st.spinner("Preparing the audio..."):
+            st.session_state.debriefs[key] = voice.debrief_audio(r)
+    path, note = st.session_state.debriefs.get(key, (None, None))
+    if path:
+        st.audio(path)
+    elif note:
+        st.caption(note)
+
+
+# ------------------------------------------------------------------
 # One analysis, shown inside an assistant chat message
 # ------------------------------------------------------------------
 def render_result(r, key=None, approvable=False):
@@ -361,6 +378,7 @@ def render_result(r, key=None, approvable=False):
         st.markdown("#### Explanation")
         st.markdown(md_safe(r["explanation"]))
     if approvable:
+        render_debrief(r, key)
         render_approve(r, key)
 
 
@@ -369,11 +387,25 @@ def render_result(r, key=None, approvable=False):
 # ------------------------------------------------------------------
 if "approved" not in st.session_state:
     st.session_state.approved = set()     # which analyses the admin has approved (only decides what to SHOW)
+if "debriefs" not in st.session_state:
+    st.session_state.debriefs = {}    # analysis number -> (audio path or None, note or None)
 if "history" not in st.session_state:
     st.session_state.history = []     # [{"question", "result" or None, "error" or None}]
 
+# Ask by voice. The recording goes to ElevenLabs as raw audio; only its transcript enters the pipeline.
+voice_question = None
+with st.sidebar:
+    st.markdown("**Ask by voice**")
+    clip = st.audio_input("Record a question", key="voice_clip", label_visibility="collapsed")
+    st.caption("The recording is sent to ElevenLabs to be turned into text. Don't dictate customer data.")
+    if clip is not None:
+        with st.spinner("Turning your recording into text..."):
+            voice_question, voice_note = voice.transcribe_once(clip.getvalue(), st.session_state)
+        if voice_note:
+            st.caption(voice_note)
+
 question = st.chat_input("Ask about a slow report, e.g. 'Why is the weekly sales report slow?' "
-                         "or paste a SELECT")
+                         "or paste a SELECT") or voice_question
 if question:
     entry = {"question": question, "result": None, "error": None}
     with st.spinner("Analysing: masking, finding the bottleneck, simulating and timing fixes... "
@@ -412,4 +444,6 @@ for position, entry in enumerate(st.session_state.history):
         else:
             if entry["result"].get("demo"):
                 st.info(demo_mode.LABEL, icon=":material/movie:")
+            else:                          # the history survives switching Demo mode: say where each answer came from
+                st.caption(demo_mode.LIVE_LABEL)
             render_result(entry["result"], key=position, approvable=True)

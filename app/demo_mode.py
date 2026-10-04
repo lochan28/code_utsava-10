@@ -17,6 +17,7 @@ import pipeline
 DEMO_MODE_KEY = "demo_mode"                       # the st.session_state key the sidebar toggle sets
 RECORDING = Path(__file__).resolve().parent / "demo_results.json"
 LABEL = "DEMO MODE: recorded results from a real run, not a live analysis."
+LIVE_LABEL = "LIVE analysis: the real database and the real AI, run just now (not the demo recording)."
 
 
 def load():
