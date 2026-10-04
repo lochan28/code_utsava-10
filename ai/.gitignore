@@ -1,0 +1,4 @@
+# scratch / experiment outputs
+*.pkl
+gnn_real_*.pt
+__pycache__/
