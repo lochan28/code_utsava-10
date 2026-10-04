@@ -94,8 +94,9 @@ Shown for the **top pick** (first by trust: measured, simulated, rule-only, unve
 - If every fix is unsafe, only a warning is shown: no numbers, no charts, no green.
 - When a MEASURED time exists it is the headline (chart + the 50% target check). The planner estimate
   moves into a collapsed expander "Planner estimate (can disagree with measured time)". If the two point
-  in opposite directions the estimate gets a neutral amber note, not a red WORSE. With no measured time
-  the page is as before (cost estimate only).
+  in opposite directions the estimate gets a neutral amber note, not a red WORSE. While a measured time exists the
+  planner box shows NO target marker (met / below / worse) and gray bars: only the measured headline carries the 50%
+  target. With no measured time the page is as before (cost estimate only, with its marker).
 - **Everything on the stubs is fake** (cost 19437 -> 812, 27 -> 3 ms, 0.002 ms, 22,000,000 bytes). The numbers
   become real when Persons 1 and 3 deliver. Use the sidebar sample (4 variants) to see every state.
 

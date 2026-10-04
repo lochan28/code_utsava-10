@@ -191,8 +191,9 @@ def target_marker(status, worse_text):
 
 
 def render_cost_panel(c, time=None):
-    """The planner's estimate. If a MEASURED time exists and says the opposite, the estimate is
-    not shown as a red failure: a neutral amber note says to trust the measurement."""
+    """The planner's estimate. If a MEASURED time exists, the 50% target marker is NOT shown here (the
+    measured headline carries it) and the bars are gray; if the measurement says the opposite, a neutral
+    amber note says to trust it."""
     with st.container(border=True):
         st.markdown("**Planner cost** · the planner's estimate, not a stopwatch")
         if c is None:
@@ -204,10 +205,11 @@ def render_cost_panel(c, time=None):
             st.warning("The planner's estimate points the other way from the measured time. Trust the "
                        "measured time: planner estimates are often unreliable, especially for rewrites.",
                        icon=":material/info:")
-        else:
+        elif time is None:                 # a measured time exists -> it alone says met / below / worse
             target_marker(c["status"], "WORSE: this fix is estimated to make the query MORE expensive.")
         st.altair_chart(charts.before_after_chart(c["before"], c["after"], "planner cost units (estimate)",
-                                                  status="none" if opposite else c["status"]), width="stretch")
+                                                  status="none" if (opposite or time is not None) else c["status"]),
+                        width="stretch")
         st.caption(f"Source: {c['source']}")
 
 
