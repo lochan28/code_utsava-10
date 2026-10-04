@@ -258,6 +258,26 @@ class TimeCheckError(RuntimeError):
     message could contain real names, and it must not reach the audit log."""
 
 
+def make_write_fn(mapping):
+    """write_fn for ai/: masked CREATE INDEX in, {"before_ms", "after_ms", "delta_ms"} (ms per inserted
+    row) out, or None until Person 1's sandbox has measure_write_latency(). Only ONE plain CREATE INDEX
+    can be measured (a partition crashes there). A failure carries only its exception TYPE."""
+    run = getattr(sandbox, "measure_write_latency", None)
+    if run is None:
+        return None
+
+    def write_fn(masked_index_sql):
+        if not ONE_CREATE_INDEX.fullmatch(masked_index_sql or ""):
+            raise ValueError("Only one plain CREATE INDEX can be measured for write cost.")
+        try:
+            # RESTORE POINT 2 of 3 (sandbox call): the index gets its real names back HERE, only to be
+            # built and rolled back on the sandbox copy. ai/ gets numbers (ms per row) and nothing else.
+            return run(mask.unmask(masked_index_sql, mapping))
+        except Exception as e:                           # noqa: BLE001
+            raise RuntimeError(type(e).__name__) from None
+    return write_fn
+
+
 def make_time_fn(original_sql, masked_original, mapping, checks, restore=None):
     """time_fn for ai/, or None until Person 1's sandbox has checked_run().
 
@@ -464,9 +484,12 @@ def analyze(question):
 
     # Optional extra inputs. Each one is built only if ai/ can take it AND the module that
     # supplies it exists yet; otherwise it is simply left out (no crash, no fake data).
-    takes = _accepted(rl.recommend, ("time_fn", "stats", "column_types"))
+    takes = _accepted(rl.recommend, ("time_fn", "stats", "column_types", "write_fn"))
     checks, extra, ai_inputs = [], {}, {}
     time_fn = make_time_fn(q["sql"], masked_sql, mapping, checks, restore) if "time_fn" in takes else None
+    write_fn = make_write_fn(mapping) if "write_fn" in takes else None
+    if write_fn:
+        extra["write_fn"] = write_fn
     if time_fn:
         extra["time_fn"] = time_fn
     ai_inputs["time_fn"] = ("used" if time_fn else "not available yet") if "time_fn" in takes \
@@ -527,6 +550,9 @@ def analyze(question):
     deploy_scripts = [restore(mask.unmask(rec.get("action") or "", mapping)) if isinstance(rec, dict) else ""
                       for rec in recs]
     deploy_sql = deploy_scripts[0] if deploy_scripts else ""
+    # A fix timed together with a query rewrite (rewrite_sql): the real rewrite, same order, "" if none.
+    deploy_rewrites = [restore(mask.unmask(rec.get("rewrite_sql") or "", mapping)) if isinstance(rec, dict) else ""
+                       for rec in recs]
     # Same restore point: the explanation with the admin's real names put back. It is built from
     # the FINISHED explanation, so it can never reach a prompt, and only the Approve step shows it.
     explanation_unmasked = restore(mask.unmask(explanation, mapping))
@@ -537,8 +563,12 @@ def analyze(question):
         own = index_sql is not None and best.get("kind") == "index"
         t_before = _measured("time_before", lambda: sandbox.timed_run(q["sql"]), own, match)
         t_after = _measured("time_after", lambda: sandbox.timed_run(q["sql"], [deploy_sql]), own, match)
-    write_ms = _measured("write_latency", lambda: sandbox.measure_write_latency(index_sql)["delta_ms"],
-                         index_sql is not None, match)
+    wl = best.get("write_latency")                 # ai/ already measured it (write_fn): use its number
+    if isinstance(wl, dict) and wl.get("source") == "measured" and tradeoff.ok(wl.get("delta_ms_per_row")):
+        write_ms = wl["delta_ms_per_row"]
+    else:
+        write_ms = _measured("write_latency", lambda: sandbox.measure_write_latency(index_sql)["delta_ms"],
+                             index_sql is not None, match)
     storage = _measured("storage", lambda: sandbox.index_size_bytes(index_sql), index_sql is not None, match)
     pct = tradeoff.improvement(best.get("cost_before"), best.get("cost_after"))
     return {
@@ -562,6 +592,8 @@ def analyze(question):
         # Extra key: the un-masked fix for EACH recommendation (same order as "recommendations"),
         # for the Approve step only. Real values: nothing but the Approve step may show them.
         "deploy_scripts": deploy_scripts,
+        # Extra key: the un-masked query rewrite that goes with each fix ("" if none). Approve step only.
+        "deploy_rewrites": deploy_rewrites,
         "leak_check": leak_check,
         # Extra key (not in the original contract; adding it breaks nobody):
         # how the question was matched, for the "matched X, 82% sure" line.
