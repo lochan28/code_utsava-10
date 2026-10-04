@@ -95,6 +95,18 @@ def _looks_like_sql(text):
     return re.match(r"\s*(select|with)\b", text, re.I) is not None
 
 
+def _no_auto_prepare():
+    """Stopgap for a sandbox problem (Person 1's db/sandbox.py): psycopg turns a query into a server-side
+    PREPARED statement after it has run 5 times. EXPLAIN (GENERIC_PLAN) on a query with $1, $2 (every query
+    from the slow-query log) then fails on the 6th run with "bind message supplies 0 parameters". ai/ costs the
+    same query many times, so it hit that. Switching auto-prepare off on the cost connection avoids it.
+    Remove this when db/sandbox.py creates its connection with prepare_threshold=None."""
+    try:
+        sandbox._connection().prepare_threshold = None
+    except Exception:                                    # noqa: BLE001 - a stopgap must never stop an analysis
+        pass
+
+
 def _read_only_sql(text):
     """Accept exactly one read-only SELECT; reject anything that could change data."""
     try:
@@ -468,6 +480,7 @@ def analyze(question):
     # read-only transaction, with a statement_timeout. Also: the DB user "tuner" is a
     # SUPERUSER today; use a restricted read-only role for anything that runs pasted SQL.
     # ---- real side: only db/ and privacy/ see real SQL ----
+    _no_auto_prepare()
     masked_sql = mask.mask_query(q["sql"], mapping)
     masked_plan = mask.mask_plan(sandbox.get_plan(q["sql"]), mapping)
     bitmask = mask.column_bitmask(q["sql"], mapping)

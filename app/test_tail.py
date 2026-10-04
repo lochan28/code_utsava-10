@@ -7,6 +7,7 @@ Run:  .venv/Scripts/python -m app.test_tail      (from the project folder)
 - when ai/ already timed the fix (measured_ms_*), the pipeline does not time it again;
 - the Approve script for a combined fix: the partition step as comments, the index as a statement.
 """
+import uuid
 from contextlib import ExitStack
 
 import pipeline
@@ -162,6 +163,43 @@ def test_deploy_rewrites_are_aligned_with_the_recommendations_and_real():
     assert r["deploy_rewrites"] == ["SELECT count(*) FROM orders", ""]
     assert len(r["deploy_rewrites"]) == len(r["recommendations"]) == len(r["deploy_scripts"])
     assert T not in r["deploy_rewrites"][0] and r["leak_check"] is True
+
+
+PLACEHOLDER_SQL = "SELECT c.name FROM customers c WHERE c.segment = $1 AND c.customer_id <= $2"     # like the slow-query log
+
+
+def test_a_query_with_placeholders_can_be_costed_many_times_once_auto_prepare_is_off():
+    conn = sandbox._connection()
+    conn.prepare_threshold = 5                                   # psycopg's default
+    unique = uuid.uuid4().hex[:8]                                # fresh text: the driver remembers prepared statements
+    for variant, switch_off in ((f"-- without the stopgap {unique}", False), (f"-- with the stopgap {unique}", True)):
+        if switch_off:
+            pipeline._no_auto_prepare()
+        failed_at = None
+        for i in range(1, 13):
+            try:
+                sandbox.cost(f"{PLACEHOLDER_SQL} {variant}")
+            except Exception as e:                               # noqa: BLE001
+                failed_at = (i, type(e).__name__)
+                conn.rollback()
+                break
+        assert (failed_at is None) == switch_off, (variant, failed_at)
+        if not switch_off:
+            assert failed_at == (6, "ProtocolViolation"), failed_at   # the bug itself: the 6th run
+    assert conn.prepare_threshold is None
+
+
+def test_analyze_switches_auto_prepare_off_before_ai_costs_anything():
+    sandbox._connection().prepare_threshold = 5
+    run_with([rec("index", INDEX_M)])
+    assert sandbox._connection().prepare_threshold is None
+
+
+def test_the_stopgap_never_stops_an_analysis():
+    def broken():
+        raise RuntimeError("no connection")
+    with patched(sandbox, "_connection", broken):
+        pipeline._no_auto_prepare()                              # must not raise
 
 
 def run_all():
