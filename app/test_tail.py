@@ -7,6 +7,8 @@ Run:  .venv/Scripts/python -m app.test_tail      (from the project folder)
 - when ai/ already timed the fix (measured_ms_*), the pipeline does not time it again;
 - the Approve script for a combined fix: the partition step as comments, the index as a statement.
 """
+import threading
+import time
 import uuid
 from contextlib import ExitStack
 
@@ -200,6 +202,47 @@ def test_the_stopgap_never_stops_an_analysis():
         raise RuntimeError("no connection")
     with patched(sandbox, "_connection", broken):
         pipeline._no_auto_prepare()                              # must not raise
+
+
+def test_analyses_run_one_at_a_time_even_when_several_sessions_ask_together():
+    """Streamlit runs each browser session in its own thread and the sandbox has one shared connection:
+    two analyses at once made the sandbox fail (ReadOnlySqlTransaction). They must queue instead."""
+    active, peak, done = [0], [0], []
+    gate = threading.Lock()
+
+    def slow_analysis(question):
+        with gate:
+            active[0] += 1
+            peak[0] = max(peak[0], active[0])
+        time.sleep(0.05)
+        with gate:
+            active[0] -= 1
+        done.append(question)
+        return question
+    with patched(pipeline, "_analyze", slow_analysis):
+        threads = [threading.Thread(target=pipeline.analyze, args=(f"q{i}",)) for i in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(10)
+    assert sorted(done) == [f"q{i}" for i in range(5)] and peak[0] == 1, (done, peak)
+
+
+def test_a_failed_analysis_does_not_block_the_next_one():
+    def explode(question):
+        raise ValueError("rejected SQL")
+    with patched(pipeline, "_analyze", explode):
+        try:
+            pipeline.analyze("x")
+            raise AssertionError("no error")
+        except ValueError:
+            pass
+    out = []
+    with patched(pipeline, "_analyze", lambda q: out.append(q) or q):
+        t = threading.Thread(target=lambda: pipeline.analyze("next"))
+        t.start()
+        t.join(5)
+    assert out == ["next"] and not t.is_alive(), "the lock was not released after an error"
 
 
 def run_all():

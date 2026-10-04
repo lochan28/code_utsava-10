@@ -12,6 +12,7 @@ import json
 import math
 import os
 import re
+import threading
 
 import psycopg
 import sqlglot
@@ -457,7 +458,21 @@ def _measured(what, measure_fn, allowed, match):
         return None
 
 
+# ONE analysis at a time. db/sandbox.py keeps one shared, global writable connection, and an analysis
+# changes its state (SET transaction_read_only ...). Streamlit runs every browser session (and a refresh
+# during a long analysis) in its own thread, so two analyses at once corrupted each other: the second one's
+# index builds failed with ReadOnlySqlTransaction and time_fn failed for BOTH. A second analysis now waits.
+# Remove this when db/sandbox.py uses one connection per thread.
+_ANALYSIS_LOCK = threading.Lock()
+
+
 def analyze(question):
+    """Analyse one question (see _analyze). Analyses run one at a time, in this process."""
+    with _ANALYSIS_LOCK:
+        return _analyze(question)
+
+
+def _analyze(question):
     # The raw question and any pasted SQL are UNTRUSTED and may hold real names,
     # emails or amounts. The raw question was used above for matching ONLY. From
     # here on, raw text is used for (a) the admin-only display and (b) the masker.
