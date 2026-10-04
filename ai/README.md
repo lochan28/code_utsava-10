@@ -26,10 +26,12 @@ Input: an `EXPLAIN (FORMAT JSON)` plan, masked, as `{"Plan": {...}}`. Plans run 
 | `relation` | masked table name, or `None` |
 | `rows` | planner's row estimate for that step |
 | `cost_share_pct` | its share of the plan's cost, counting repeats (loops) |
-| `reason` | one readable sentence built from the numbers (no LLM) |
-| `evidence` | the numbers behind the reason (contract key) |
+| `reason` | readable sentences built from the numbers (no LLM). With weights it starts with the **GNN-generated** part (its pick + score; or that the rule check overrode it), then the step's numbers |
+| `evidence` | the numbers behind the reason (contract key); with weights also `gnn_top3` (the GNN's 3 highest-rated steps + scores) |
 | `path` | which method picked it: `rules` / `gated_hybrid` / `gnn` |
 | `second_opinion` | the shipped GNN's own pick, shown NEXT TO the reason (CLAUDE.md v3): `{node_id, op, relation, confidence, agrees}`; never changes the pick; `None` without weights |
+
+**Who decides:** the pick comes from `BOTTLENECK_PATH` (default **`rules`**, the most accurate); the reason is GNN-generated on top of it, so accuracy is never lower than the rules.
 
 **Three paths** (setting `BOTTLENECK_PATH` at the top of `gnn.py`; default **`rules`**):
 

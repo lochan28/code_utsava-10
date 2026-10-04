@@ -320,8 +320,32 @@ def find_bottleneck(masked_plan, path_setting=None):
     node_id, path = choose_by_setting(masked_plan, path_setting)
     out = explain_node(masked_plan, node_id, path)
     out["path"] = path
-    out["second_opinion"] = second_opinion(masked_plan, node_id)
+    out["second_opinion"] = so = second_opinion(masked_plan, node_id)
+    if so:                                   # GNN-generated reason (PS4), the rules stay the safety check
+        out["reason"] = gnn_sentence(masked_plan, so) + " " + out["reason"]
+        out["evidence"]["gnn_top3"] = gnn_top(masked_plan, 3)
     return out
+
+
+@torch.no_grad()
+def gnn_top(masked_plan, k=3):
+    """The GNN's k highest-rated steps: [{node_id, op, relation, score}] (softmax over steps)."""
+    model, _ = load_model()
+    prob = torch.softmax(model(Batch.from_data_list([to_graph(masked_plan).to(DEVICE)])), 0).cpu()
+    nodes = flatten(masked_plan)
+    return [{"node_id": i, "op": nodes[i]["node"]["Node Type"],
+             "relation": nodes[i]["node"].get("Relation Name") or nodes[i]["node"].get("Index Name"),
+             "score": round(float(prob[i]), 3)} for i in prob.argsort(descending=True)[:k].tolist()]
+
+
+def gnn_sentence(masked_plan, so):
+    """One sentence from the GNN's reading of the plan; says so when the rule check overrides it."""
+    where = f" on {so['relation']}" if so["relation"] else ""
+    if so["agrees"]:
+        return (f"The GNN reads the plan as a graph and rates {so['op']}{where} as the bottleneck "
+                f"({so['confidence']:.0%} of its score); the rule check agrees.")
+    return (f"The GNN rated {so['op']}{where} highest ({so['confidence']:.0%}), but the rule check "
+            f"({rules_pick(masked_plan)[1]}) picked the step below instead.")
 
 
 def second_opinion(masked_plan, chosen_id):
