@@ -131,30 +131,36 @@
     "cost_after": 11143.58,
     "improvement_pct": 85.2,
     "reward": 0.822,
-    "measured_ms_before": 74.0,
-    "measured_ms_after": 4.42,
-    "measured_gain_pct": 94.0,
+    "measured_ms_before": 72.27,
+    "measured_ms_after": 7.05,
+    "measured_gain_pct": 90.2,
     "planner_gain_pct": 85.2,
     "timing_note": "median of 5 sandbox runs each, same results",
     "write_latency": {
-     "source": "estimated",
-     "note": "width-based write penalty, not measured"
+     "source": "measured",
+     "before_ms_per_row": 0.00161,
+     "delta_ms_per_row": 0.00277,
+     "pct": 172.0,
+     "indexes": 1
     },
-    "summary": "Add index on t_438 (c_720) (94% faster in measured sandbox time (planner estimated 85%), +1 index column to maintain on writes (estimated, write penalty 0.03)). Zero raw data exposed to the AI (masked metadata only)."
+    "summary": "Add index on t_438 (c_720) (90% faster in measured sandbox time (planner estimated 85%), +0.00277 ms per inserted row, measured on the sandbox copy (+172% insert time)). Zero raw data exposed to the AI (masked metadata only)."
    }
   ],
   "cost_before": 75255.49,
   "cost_after": 11143.58,
   "improvement_pct": 85.2,
-  "time_before_ms": 74.0,
-  "time_after_ms": 4.42,
-  "write_latency_ms": 0.0009,
+  "time_before_ms": 72.27,
+  "time_after_ms": 7.05,
+  "write_latency_ms": 0.00277,
   "storage_bytes": 35577856,
   "explanation": "Why it is slow: The GNN reads the plan as a graph and rates Seq Scan on t_438 as the bottleneck (100% of its score); the rule check agrees. Seq Scan on t_438 is the bottleneck: it handles about 1,459 rows and accounts for about 98.1% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=98.1, gnn_top3=[{'node_id': 2, 'op': 'Seq Scan', 'relation': 't_438', 'score': 0.998}, {'node_id': 0, 'op': 'Gather Merge', 'relation': None, 'score': 0.002}, {'node_id': 1, 'op': 'Sort', 'relation': None, 'score': 0.0}], loops=1, picked_by=rules, plan_rows=1459, relation=t_438, self_cost=73838.33). Best fix: CREATE INDEX ON t_438 (c_720) - Exact-match filter: simulated cost 75,255 -> 11,144 (85.2% lower). The planner's estimated cost drops from 75,255 to 11,144, about 85% lower.",
   "explanation_unmasked": "Why it is slow: The GNN reads the plan as a graph and rates Seq Scan on orders as the bottleneck (100% of its score); the rule check agrees. Seq Scan on orders is the bottleneck: it handles about 1,459 rows and accounts for about 98.1% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=98.1, gnn_top3=[{'node_id': 2, 'op': 'Seq Scan', 'relation': 'orders', 'score': 0.998}, {'node_id': 0, 'op': 'Gather Merge', 'relation': None, 'score': 0.002}, {'node_id': 1, 'op': 'Sort', 'relation': None, 'score': 0.0}], loops=1, picked_by=rules, plan_rows=1459, relation=orders, self_cost=73838.33). Best fix: CREATE INDEX ON orders (customer_id) - Exact-match filter: simulated cost 75,255 -> 11,144 (85.2% lower). The planner's estimated cost drops from 75,255 to 11,144, about 85% lower.",
   "deploy_sql": "CREATE INDEX ON orders (customer_id)",
   "deploy_scripts": [
    "CREATE INDEX ON orders (customer_id)"
+  ],
+  "deploy_rewrites": [
+   ""
   ],
   "leak_check": true,
   "match": {
@@ -168,7 +174,7 @@
    "source": "template",
    "prompt_leak_ok": true,
    "reply_leak_ok": null,
-   "latency_ms": 0.7,
+   "latency_ms": 1.7,
    "fallback_reason": "LLM unavailable: recording uses the template explanation"
   },
   "unsafe_rewrite": false,
@@ -428,27 +434,6 @@
   "recommendations": [
    {
     "kind": "partition",
-    "action": "PARTITION t_438 BY RANGE (c_303) MONTHLY; CREATE INDEX ON t_438 (c_303)",
-    "cost_before": 82641.04,
-    "cost_after": 4882.45,
-    "novelty": "unseen shape (lower confidence)",
-    "agent_score": null,
-    "write_penalty": 0.03,
-    "verified_by": "timed_run",
-    "improvement_pct": 94.1,
-    "reward": 0.911,
-    "combined": true,
-    "reason": "Partition and index together: simulated cost 82,641 -> 4,882 (94.1% lower).",
-    "measured_ms_before": 111.9,
-    "measured_ms_after": 29.51,
-    "measured_gain_pct": 73.6,
-    "planner_gain_pct": 94.1,
-    "timing_note": "median of 5 sandbox runs each, same results",
-    "summary": "Partition t_438 by c_303 and add index on t_438 (c_303) (74% faster in measured sandbox time (planner estimated 94%); write cost not measured). Zero raw data exposed to the AI (masked metadata only).",
-    "why_not": "Partitioning t_438 by c_303 not chosen: a smaller change does as well or better (simulated cost drop 94% vs 94% for the chosen fix)."
-   },
-   {
-    "kind": "partition",
     "action": "PARTITION t_438 BY RANGE (c_303) MONTHLY",
     "cost_before": 82641.04,
     "novelty": "unseen shape (lower confidence)",
@@ -459,11 +444,13 @@
     "cost_after": 4882.45,
     "improvement_pct": 94.1,
     "reward": 0.911,
-    "measured_ms_before": 111.9,
-    "measured_ms_after": 30.1,
-    "measured_gain_pct": 73.1,
+    "measured_ms_before": 115.77,
+    "measured_ms_after": 32.26,
+    "measured_gain_pct": 72.1,
     "planner_gain_pct": 94.1,
-    "timing_note": "median of 5 sandbox runs each, same results"
+    "timing_note": "median of 5 sandbox runs each, same results",
+    "summary": "Partition t_438 by c_303 (72% faster in measured sandbox time (planner estimated 94%); write cost not measured). Zero raw data exposed to the AI (masked metadata only).",
+    "why_not": "Index on t_438(c_303) not chosen: it cuts the simulated cost by only 33% vs 94% for the chosen fix."
    },
    {
     "kind": "index",
@@ -477,31 +464,37 @@
     "cost_after": 55514.86,
     "improvement_pct": 32.8,
     "reward": 0.298,
-    "measured_ms_before": 111.9,
-    "measured_ms_after": 112.08,
-    "measured_gain_pct": -0.2,
+    "measured_ms_before": 115.77,
+    "measured_ms_after": 111.32,
+    "measured_gain_pct": 3.8,
     "planner_gain_pct": 32.8,
     "timing_note": "median of 5 sandbox runs each, same results",
     "write_latency": {
-     "source": "estimated",
-     "note": "width-based write penalty, not measured"
+     "source": "measured",
+     "before_ms_per_row": 0.00153,
+     "delta_ms_per_row": 0.00284,
+     "pct": 185.6,
+     "indexes": 1
     }
    }
   ],
   "cost_before": 82641.04,
   "cost_after": 4882.45,
   "improvement_pct": 94.1,
-  "time_before_ms": 111.9,
-  "time_after_ms": 29.51,
-  "write_latency_ms": 0.00281,
-  "storage_bytes": 35176448,
-  "explanation": "Why it is slow: The GNN reads the plan as a graph and rates Seq Scan on t_438 as the bottleneck (99% of its score); the rule check agrees. Seq Scan on t_438 is the bottleneck: it handles about 61,752 rows and accounts for about 95.7% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=95.7, gnn_top3=[{'node_id': 7, 'op': 'Seq Scan', 'relation': 't_438', 'score': 0.988}, {'node_id': 9, 'op': 'Seq Scan', 'relation': 't_491', 'score': 0.008}, {'node_id': 6, 'op': 'Hash Join', 'relation': None, 'score': 0.003}], loops=1, picked_by=rules, plan_rows=61752, relation=t_438, self_cost=79047.6). Best fix: PARTITION t_438 BY RANGE (c_303) MONTHLY; CREATE INDEX ON t_438 (c_303) - Partition and index together: simulated cost 82,641 -> 4,882 (94.1% lower). The planner's estimated cost drops from 82,641 to 4,882, about 94% lower. 2 other option(s) were also considered.",
-  "explanation_unmasked": "Why it is slow: The GNN reads the plan as a graph and rates Seq Scan on orders as the bottleneck (99% of its score); the rule check agrees. Seq Scan on orders is the bottleneck: it handles about 61,752 rows and accounts for about 95.7% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=95.7, gnn_top3=[{'node_id': 7, 'op': 'Seq Scan', 'relation': 'orders', 'score': 0.988}, {'node_id': 9, 'op': 'Seq Scan', 'relation': 'customers', 'score': 0.008}, {'node_id': 6, 'op': 'Hash Join', 'relation': None, 'score': 0.003}], loops=1, picked_by=rules, plan_rows=61752, relation=orders, self_cost=79047.6). Best fix: PARTITION orders BY RANGE (order_date) MONTHLY; CREATE INDEX ON orders (order_date) - Partition and index together: simulated cost 82,641 -> 4,882 (94.1% lower). The planner's estimated cost drops from 82,641 to 4,882, about 94% lower. 2 other option(s) were also considered.",
-  "deploy_sql": "PARTITION orders BY RANGE (order_date) MONTHLY; CREATE INDEX ON orders (order_date)",
+  "time_before_ms": 115.77,
+  "time_after_ms": 32.26,
+  "write_latency_ms": null,
+  "storage_bytes": null,
+  "explanation": "Why it is slow: The GNN reads the plan as a graph and rates Seq Scan on t_438 as the bottleneck (99% of its score); the rule check agrees. Seq Scan on t_438 is the bottleneck: it handles about 61,752 rows and accounts for about 95.7% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=95.7, gnn_top3=[{'node_id': 7, 'op': 'Seq Scan', 'relation': 't_438', 'score': 0.988}, {'node_id': 9, 'op': 'Seq Scan', 'relation': 't_491', 'score': 0.008}, {'node_id': 6, 'op': 'Hash Join', 'relation': None, 'score': 0.003}], loops=1, picked_by=rules, plan_rows=61752, relation=t_438, self_cost=79047.6). Best fix: PARTITION t_438 BY RANGE (c_303) MONTHLY - Range filter on this column; partitions let the scan skip whole months: simulated cost 82,641 -> 4,882 (94.1% lower). The planner's estimated cost drops from 82,641 to 4,882, about 94% lower. 1 other option(s) were also considered.",
+  "explanation_unmasked": "Why it is slow: The GNN reads the plan as a graph and rates Seq Scan on orders as the bottleneck (99% of its score); the rule check agrees. Seq Scan on orders is the bottleneck: it handles about 61,752 rows and accounts for about 95.7% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=95.7, gnn_top3=[{'node_id': 7, 'op': 'Seq Scan', 'relation': 'orders', 'score': 0.988}, {'node_id': 9, 'op': 'Seq Scan', 'relation': 'customers', 'score': 0.008}, {'node_id': 6, 'op': 'Hash Join', 'relation': None, 'score': 0.003}], loops=1, picked_by=rules, plan_rows=61752, relation=orders, self_cost=79047.6). Best fix: PARTITION orders BY RANGE (order_date) MONTHLY - Range filter on this column; partitions let the scan skip whole months: simulated cost 82,641 -> 4,882 (94.1% lower). The planner's estimated cost drops from 82,641 to 4,882, about 94% lower. 1 other option(s) were also considered.",
+  "deploy_sql": "PARTITION orders BY RANGE (order_date) MONTHLY",
   "deploy_scripts": [
-   "PARTITION orders BY RANGE (order_date) MONTHLY; CREATE INDEX ON orders (order_date)",
    "PARTITION orders BY RANGE (order_date) MONTHLY",
    "CREATE INDEX ON orders (order_date)"
+  ],
+  "deploy_rewrites": [
+   "",
+   ""
   ],
   "leak_check": true,
   "match": {
@@ -515,7 +508,7 @@
    "source": "template",
    "prompt_leak_ok": true,
    "reply_leak_ok": null,
-   "latency_ms": 1.0,
+   "latency_ms": 1.6,
    "fallback_reason": "LLM unavailable: recording uses the template explanation"
   },
   "unsafe_rewrite": false,
@@ -638,12 +631,12 @@
     "reward": 0.922,
     "combined": true,
     "reason": "Partition and index together: simulated cost 80,442 -> 1,438 (98.2% lower).",
-    "measured_ms_before": 73.94,
-    "measured_ms_after": 1.0,
-    "measured_gain_pct": 98.6,
+    "measured_ms_before": 79.9,
+    "measured_ms_after": 2.21,
+    "measured_gain_pct": 97.2,
     "planner_gain_pct": 98.2,
     "timing_note": "median of 5 sandbox runs each, same results",
-    "summary": "Partition t_438 by c_303 and add composite index on t_438 (c_e7e, c_303) (99% faster in measured sandbox time (planner estimated 98%); write cost not measured). Zero raw data exposed to the AI (masked metadata only).",
+    "summary": "Partition t_438 by c_303 and add composite index on t_438 (c_e7e, c_303) (97% faster in measured sandbox time (planner estimated 98%); write cost not measured). Zero raw data exposed to the AI (masked metadata only).",
     "why_not": "Partitioning t_438 by c_303 not chosen: a smaller change does as well or better (simulated cost drop 96% vs 98% for the chosen fix)."
    },
    {
@@ -658,9 +651,9 @@
     "cost_after": 3353.73,
     "improvement_pct": 95.8,
     "reward": 0.928,
-    "measured_ms_before": 73.94,
-    "measured_ms_after": 5.06,
-    "measured_gain_pct": 93.2,
+    "measured_ms_before": 79.9,
+    "measured_ms_after": 5.04,
+    "measured_gain_pct": 93.7,
     "planner_gain_pct": 95.8,
     "timing_note": "median of 5 sandbox runs each, same results"
    },
@@ -676,14 +669,17 @@
     "cost_after": 12127.07,
     "improvement_pct": 84.9,
     "reward": 0.789,
-    "measured_ms_before": 73.94,
-    "measured_ms_after": 6.4,
-    "measured_gain_pct": 91.3,
+    "measured_ms_before": 79.9,
+    "measured_ms_after": 5.33,
+    "measured_gain_pct": 93.3,
     "planner_gain_pct": 84.9,
     "timing_note": "median of 5 sandbox runs each, same results",
     "write_latency": {
-     "source": "estimated",
-     "note": "width-based write penalty, not measured"
+     "source": "measured",
+     "before_ms_per_row": 0.00209,
+     "delta_ms_per_row": 0.00228,
+     "pct": 109.1,
+     "indexes": 1
     }
    },
    {
@@ -698,9 +694,9 @@
     "cost_after": 51299.76,
     "improvement_pct": 36.2,
     "reward": 0.332,
-    "measured_ms_before": 73.94,
-    "measured_ms_after": 54.33,
-    "measured_gain_pct": 26.5,
+    "measured_ms_before": 79.9,
+    "measured_ms_after": 50.81,
+    "measured_gain_pct": 36.4,
     "planner_gain_pct": 36.2,
     "timing_note": "median of 5 sandbox runs each, same results"
    }
@@ -708,9 +704,9 @@
   "cost_before": 80442.1,
   "cost_after": 1437.72,
   "improvement_pct": 98.2,
-  "time_before_ms": 73.94,
-  "time_after_ms": 1.0,
-  "write_latency_ms": 0.00311,
+  "time_before_ms": 79.9,
+  "time_after_ms": 2.21,
+  "write_latency_ms": 0.00308,
   "storage_bytes": 36331520,
   "explanation": "Why it is slow: The GNN reads the plan as a graph and rates Seq Scan on t_438 as the bottleneck (100% of its score); the rule check agrees. Seq Scan on t_438 is the bottleneck: it handles about 1,644 rows and accounts for about 98.3% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=98.3, gnn_top3=[{'node_id': 1, 'op': 'Seq Scan', 'relation': 't_438', 'score': 1.0}, {'node_id': 0, 'op': 'Gather', 'relation': None, 'score': 0.0}], loops=1, picked_by=rules, plan_rows=1644, relation=t_438, self_cost=79047.6). Best fix: PARTITION t_438 BY RANGE (c_303) MONTHLY; CREATE INDEX ON t_438 (c_e7e, c_303) - Partition and index together: simulated cost 80,442 -> 1,438 (98.2% lower). The planner's estimated cost drops from 80,442 to 1,438, about 98% lower. 3 other option(s) were also considered.",
   "explanation_unmasked": "Why it is slow: The GNN reads the plan as a graph and rates Seq Scan on orders as the bottleneck (100% of its score); the rule check agrees. Seq Scan on orders is the bottleneck: it handles about 1,644 rows and accounts for about 98.3% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=98.3, gnn_top3=[{'node_id': 1, 'op': 'Seq Scan', 'relation': 'orders', 'score': 1.0}, {'node_id': 0, 'op': 'Gather', 'relation': None, 'score': 0.0}], loops=1, picked_by=rules, plan_rows=1644, relation=orders, self_cost=79047.6). Best fix: PARTITION orders BY RANGE (order_date) MONTHLY; CREATE INDEX ON orders (status, order_date) - Partition and index together: simulated cost 80,442 -> 1,438 (98.2% lower). The planner's estimated cost drops from 80,442 to 1,438, about 98% lower. 3 other option(s) were also considered.",
@@ -720,6 +716,12 @@
    "PARTITION orders BY RANGE (order_date) MONTHLY",
    "CREATE INDEX ON orders (status, order_date)",
    "CREATE INDEX ON orders (order_date)"
+  ],
+  "deploy_rewrites": [
+   "",
+   "",
+   "",
+   ""
   ],
   "leak_check": true,
   "match": {
@@ -733,7 +735,7 @@
    "source": "template",
    "prompt_leak_ok": true,
    "reply_leak_ok": null,
-   "latency_ms": 1.2,
+   "latency_ms": 2.4,
    "fallback_reason": "LLM unavailable: recording uses the template explanation"
   },
   "unsafe_rewrite": false,
@@ -889,17 +891,20 @@
     "cost_after": 53348.55,
     "improvement_pct": 99.2,
     "reward": 0.962,
-    "measured_ms_before": 15146.25,
-    "measured_ms_after": 8.51,
+    "measured_ms_before": 15659.52,
+    "measured_ms_after": 12.84,
     "measured_gain_pct": 99.9,
     "planner_gain_pct": 99.2,
     "timing_note": "median of 5 sandbox runs each, same results",
     "write_latency": {
-     "source": "estimated",
-     "note": "width-based write penalty, not measured"
+     "source": "measured",
+     "before_ms_per_row": 0.00216,
+     "delta_ms_per_row": 0.00083,
+     "pct": 38.4,
+     "indexes": 1
     },
-    "summary": "Add index on t_438 (c_720) (100% faster in measured sandbox time (planner estimated 99%), +1 index column to maintain on writes (estimated, write penalty 0.03)),  and rewrite the query (correlated subquery to join) (19.5x faster measured, same results). Numbers are per fix, measured separately. Zero raw data exposed to the AI (masked metadata only).",
-    "why_not": "Rewrite 'correlated_subquery_to_join' also works (same rows, 15,146 ms -> 776 ms, 19.5x faster) but the chosen fix gains more (95% vs 99% for the chosen fix). Note: rewrites are measured in real time, indexes by planner cost."
+    "summary": "Add index on t_438 (c_720) (100% faster in measured sandbox time (planner estimated 99%), +0.00083 ms per inserted row, measured on the sandbox copy (+38% insert time)),  and rewrite the query (correlated subquery to join) (25.1x faster measured, same results). Numbers are per fix, measured separately. Zero raw data exposed to the AI (masked metadata only).",
+    "why_not": "Rewrite 'correlated_subquery_to_join' also works (same rows, 15,660 ms -> 624 ms, 25.1x faster) but the chosen fix gains more (96% vs 99% for the chosen fix). Note: rewrites are measured in real time, indexes by planner cost."
    },
    {
     "kind": "rewrite",
@@ -912,21 +917,21 @@
     "cost_after": 85509.9,
     "verified_by": "timed_run",
     "same_results": true,
-    "time_before_ms": 15146.2,
-    "time_after_ms": 775.8,
-    "speedup": 19.52,
-    "verify_note": "same results, 15,146 ms -> 776 ms (19.5x faster)",
-    "reason": "The subquery re-runs once for every outer row. Computing it once, grouped by the link column, and joining is one pass instead of thousands. Same results, 15,146 ms -> 776 ms (19.5x faster).",
-    "improvement_pct": 94.9,
-    "reward": 0.949
+    "time_before_ms": 15659.5,
+    "time_after_ms": 624.5,
+    "speedup": 25.07,
+    "verify_note": "same results, 15,660 ms -> 625 ms (25.1x faster)",
+    "reason": "The subquery re-runs once for every outer row. Computing it once, grouped by the link column, and joining is one pass instead of thousands. Same results, 15,660 ms -> 625 ms (25.1x faster).",
+    "improvement_pct": 96.0,
+    "reward": 0.96
    }
   ],
   "cost_before": 6618244.78,
   "cost_after": 53348.55,
   "improvement_pct": 99.2,
-  "time_before_ms": 15146.25,
-  "time_after_ms": 8.51,
-  "write_latency_ms": 0.0028,
+  "time_before_ms": 15659.52,
+  "time_after_ms": 12.84,
+  "write_latency_ms": 0.00083,
   "storage_bytes": 35577856,
   "explanation": "Why it is slow: The GNN rated Index Scan on t_491 highest (72%), but the rule check (repeated inner scan) picked the step below instead. Seq Scan on t_438 is the bottleneck: it handles about 232 rows and accounts for about 100.0% of the plan's estimated cost. It runs once per row of its outer input (about 60 times), but EXPLAIN shows its cost only once. (evidence: actual_rows=None, cost_share_pct=100.0, gnn_top3=[{'node_id': 0, 'op': 'Index Scan', 'relation': 't_491', 'score': 0.723}, {'node_id': 2, 'op': 'Seq Scan', 'relation': 't_438', 'score': 0.277}, {'node_id': 1, 'op': 'Aggregate', 'relation': None, 'score': 0.0}], loops=60, picked_by=rules, plan_rows=232, relation=t_438, self_cost=110303.2). Best fix: CREATE INDEX ON t_438 (c_720) - Join / subquery lookup: simulated cost 6,618,245 -> 53,349 (99.2% lower). The planner's estimated cost drops from 6,618,245 to 53,349, about 99% lower. 1 other option(s) were also considered.",
   "explanation_unmasked": "Why it is slow: The GNN rated Index Scan on customers highest (72%), but the rule check (repeated inner scan) picked the step below instead. Seq Scan on orders is the bottleneck: it handles about 232 rows and accounts for about 100.0% of the plan's estimated cost. It runs once per row of its outer input (about 60 times), but EXPLAIN shows its cost only once. (evidence: actual_rows=None, cost_share_pct=100.0, gnn_top3=[{'node_id': 0, 'op': 'Index Scan', 'relation': 'customers', 'score': 0.723}, {'node_id': 2, 'op': 'Seq Scan', 'relation': 'orders', 'score': 0.277}, {'node_id': 1, 'op': 'Aggregate', 'relation': None, 'score': 0.0}], loops=60, picked_by=rules, plan_rows=232, relation=orders, self_cost=110303.2). Best fix: CREATE INDEX ON orders (customer_id) - Join / subquery lookup: simulated cost 6,618,245 -> 53,349 (99.2% lower). The planner's estimated cost drops from 6,618,245 to 53,349, about 99% lower. 1 other option(s) were also considered.",
@@ -934,6 +939,10 @@
   "deploy_scripts": [
    "CREATE INDEX ON orders (customer_id)",
    "SELECT a1.name, s1.v AS x1 FROM customers AS a1 LEFT JOIN (SELECT a2.customer_id AS k, SUM(a2.amount) AS v FROM orders AS a2 GROUP BY a2.customer_id) AS s1 ON s1.k = a1.customer_id WHERE a1.segment = 'corporate' AND a1.customer_id <= 300"
+  ],
+  "deploy_rewrites": [
+   "",
+   ""
   ],
   "leak_check": true,
   "match": {
@@ -947,7 +956,7 @@
    "source": "template",
    "prompt_leak_ok": true,
    "reply_leak_ok": null,
-   "latency_ms": 0.9,
+   "latency_ms": 2.8,
    "fallback_reason": "LLM unavailable: recording uses the template explanation"
   },
   "unsafe_rewrite": false,
@@ -1102,15 +1111,15 @@
     "cost_after": 80356.48,
     "verified_by": "timed_run",
     "same_results": true,
-    "time_before_ms": 233.3,
-    "time_after_ms": 91.1,
-    "speedup": 2.56,
-    "verify_note": "same results, 233 ms -> 91 ms (2.6x faster)",
-    "reason": "Wrapping the column in a function hides it from any index. An equivalent plain range on the column lets an index be used. Same results, 233 ms -> 91 ms (2.6x faster).",
-    "improvement_pct": 60.9,
-    "reward": 0.609,
+    "time_before_ms": 250.3,
+    "time_after_ms": 95.3,
+    "speedup": 2.63,
+    "verify_note": "same results, 250 ms -> 95 ms (2.6x faster)",
+    "reason": "Wrapping the column in a function hides it from any index. An equivalent plain range on the column lets an index be used. Same results, 250 ms -> 95 ms (2.6x faster).",
+    "improvement_pct": 62.0,
+    "reward": 0.62,
     "summary": "Rewrite the query (function to range) (2.6x faster measured, same results). Zero raw data exposed to the AI (masked metadata only).",
-    "why_not": "Partitioning t_438 by c_303 not chosen: a smaller change does as well or better (simulated cost drop 0.0% vs 61% for the chosen fix)."
+    "why_not": "Partitioning t_438 by c_303 not chosen: a smaller change does as well or better (simulated cost drop 0.0% vs 62% for the chosen fix)."
    }
   ],
   "cost_before": 85309.2,
@@ -1120,11 +1129,14 @@
   "time_after_ms": null,
   "write_latency_ms": null,
   "storage_bytes": null,
-  "explanation": "Why it is slow: The GNN reads the plan as a graph and rates Seq Scan on t_438 as the bottleneck (100% of its score); the rule check agrees. Seq Scan on t_438 is the bottleneck: it handles about 10,418 rows and accounts for about 98.8% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=98.8, gnn_top3=[{'node_id': 3, 'op': 'Seq Scan', 'relation': 't_438', 'score': 1.0}, {'node_id': 1, 'op': 'Gather', 'relation': None, 'score': 0.0}, {'node_id': 2, 'op': 'Aggregate', 'relation': None, 'score': 0.0}], loops=1, picked_by=rules, plan_rows=10418, relation=t_438, self_cost=84256.87). Best fix: SELECT COUNT(*), SUM(c_c37) FROM t_438 WHERE (c_303 >= $1 AND c_303 < CAST($1 AS TIMESTAMP) + INTERVAL '1 MONTH') - Wrapping the column in a function hides it from any index. An equivalent plain range on the column lets an index be used. Same results, 233 ms -> 91 ms (2.6x faster). The planner's estimated cost drops from 85,309 to 80,356, about 6% lower.",
-  "explanation_unmasked": "Why it is slow: The GNN reads the plan as a graph and rates Seq Scan on orders as the bottleneck (100% of its score); the rule check agrees. Seq Scan on orders is the bottleneck: it handles about 10,418 rows and accounts for about 98.8% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=98.8, gnn_top3=[{'node_id': 3, 'op': 'Seq Scan', 'relation': 'orders', 'score': 1.0}, {'node_id': 1, 'op': 'Gather', 'relation': None, 'score': 0.0}, {'node_id': 2, 'op': 'Aggregate', 'relation': None, 'score': 0.0}], loops=1, picked_by=rules, plan_rows=10418, relation=orders, self_cost=84256.87). Best fix: SELECT COUNT(*), SUM(amount) FROM orders WHERE (order_date >= '2026-08-01' AND order_date < CAST('2026-08-01' AS TIMESTAMP) + INTERVAL '1 MONTH') - Wrapping the column in a function hides it from any index. An equivalent plain range on the column lets an index be used. Same results, 233 ms -> 91 ms (2.6x faster). The planner's estimated cost drops from 85,309 to 80,356, about 6% lower.",
+  "explanation": "Why it is slow: The GNN reads the plan as a graph and rates Seq Scan on t_438 as the bottleneck (100% of its score); the rule check agrees. Seq Scan on t_438 is the bottleneck: it handles about 10,418 rows and accounts for about 98.8% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=98.8, gnn_top3=[{'node_id': 3, 'op': 'Seq Scan', 'relation': 't_438', 'score': 1.0}, {'node_id': 1, 'op': 'Gather', 'relation': None, 'score': 0.0}, {'node_id': 2, 'op': 'Aggregate', 'relation': None, 'score': 0.0}], loops=1, picked_by=rules, plan_rows=10418, relation=t_438, self_cost=84256.87). Best fix: SELECT COUNT(*), SUM(c_c37) FROM t_438 WHERE (c_303 >= $1 AND c_303 < CAST($1 AS TIMESTAMP) + INTERVAL '1 MONTH') - Wrapping the column in a function hides it from any index. An equivalent plain range on the column lets an index be used. Same results, 250 ms -> 95 ms (2.6x faster). The planner's estimated cost drops from 85,309 to 80,356, about 6% lower.",
+  "explanation_unmasked": "Why it is slow: The GNN reads the plan as a graph and rates Seq Scan on orders as the bottleneck (100% of its score); the rule check agrees. Seq Scan on orders is the bottleneck: it handles about 10,418 rows and accounts for about 98.8% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=98.8, gnn_top3=[{'node_id': 3, 'op': 'Seq Scan', 'relation': 'orders', 'score': 1.0}, {'node_id': 1, 'op': 'Gather', 'relation': None, 'score': 0.0}, {'node_id': 2, 'op': 'Aggregate', 'relation': None, 'score': 0.0}], loops=1, picked_by=rules, plan_rows=10418, relation=orders, self_cost=84256.87). Best fix: SELECT COUNT(*), SUM(amount) FROM orders WHERE (order_date >= '2026-08-01' AND order_date < CAST('2026-08-01' AS TIMESTAMP) + INTERVAL '1 MONTH') - Wrapping the column in a function hides it from any index. An equivalent plain range on the column lets an index be used. Same results, 250 ms -> 95 ms (2.6x faster). The planner's estimated cost drops from 85,309 to 80,356, about 6% lower.",
   "deploy_sql": "SELECT COUNT(*), SUM(amount) FROM orders WHERE (order_date >= '2026-08-01' AND order_date < CAST('2026-08-01' AS TIMESTAMP) + INTERVAL '1 MONTH')",
   "deploy_scripts": [
    "SELECT COUNT(*), SUM(amount) FROM orders WHERE (order_date >= '2026-08-01' AND order_date < CAST('2026-08-01' AS TIMESTAMP) + INTERVAL '1 MONTH')"
+  ],
+  "deploy_rewrites": [
+   ""
   ],
   "leak_check": true,
   "match": {
@@ -1138,7 +1150,7 @@
    "source": "template",
    "prompt_leak_ok": true,
    "reply_leak_ok": null,
-   "latency_ms": 2.0,
+   "latency_ms": 2.7,
    "fallback_reason": "LLM unavailable: recording uses the template explanation"
   },
   "unsafe_rewrite": false,
@@ -1372,6 +1384,27 @@
   "recommendations": [
    {
     "kind": "partition",
+    "action": "PARTITION t_438 BY RANGE (c_303) MONTHLY; CREATE INDEX ON t_438 (c_303)",
+    "cost_before": 75549.26,
+    "cost_after": 9606.16,
+    "novelty": "seen query shape",
+    "agent_score": null,
+    "write_penalty": 0.03,
+    "verified_by": "timed_run",
+    "improvement_pct": 87.3,
+    "reward": 0.843,
+    "combined": true,
+    "reason": "Partition and index together: simulated cost 75,549 -> 9,606 (87.3% lower).",
+    "measured_ms_before": 103.15,
+    "measured_ms_after": 29.92,
+    "measured_gain_pct": 71.0,
+    "planner_gain_pct": 87.3,
+    "timing_note": "median of 5 sandbox runs each, same results",
+    "summary": "Partition t_438 by c_303 and add index on t_438 (c_303) (71% faster in measured sandbox time (planner estimated 87%); write cost not measured). Zero raw data exposed to the AI (masked metadata only).",
+    "why_not": "Partitioning t_438 by c_303 not chosen: a smaller change does as well or better (simulated cost drop 87% vs 87% for the chosen fix)."
+   },
+   {
+    "kind": "partition",
     "action": "PARTITION t_438 BY RANGE (c_303) MONTHLY",
     "cost_before": 75549.26,
     "novelty": "seen query shape",
@@ -1382,13 +1415,11 @@
     "cost_after": 9606.16,
     "improvement_pct": 87.3,
     "reward": 0.843,
-    "measured_ms_before": 111.18,
-    "measured_ms_after": 30.95,
-    "measured_gain_pct": 72.2,
+    "measured_ms_before": 103.15,
+    "measured_ms_after": 32.63,
+    "measured_gain_pct": 68.4,
     "planner_gain_pct": 87.3,
-    "timing_note": "median of 5 sandbox runs each, same results",
-    "summary": "Partition t_438 by c_303 (72% faster in measured sandbox time (planner estimated 87%); write cost not measured). Zero raw data exposed to the AI (masked metadata only).",
-    "why_not": "Index on t_438(c_303) not chosen: it cuts the simulated cost by only 21% vs 87% for the chosen fix."
+    "timing_note": "median of 5 sandbox runs each, same results"
    },
    {
     "kind": "index",
@@ -1402,30 +1433,39 @@
     "cost_after": 59818.45,
     "improvement_pct": 20.8,
     "reward": 0.178,
-    "measured_ms_before": 111.18,
-    "measured_ms_after": 102.44,
-    "measured_gain_pct": 7.9,
+    "measured_ms_before": 103.15,
+    "measured_ms_after": 112.58,
+    "measured_gain_pct": -9.1,
     "planner_gain_pct": 20.8,
     "timing_note": "median of 5 sandbox runs each, same results",
     "write_latency": {
-     "source": "estimated",
-     "note": "width-based write penalty, not measured"
+     "source": "measured",
+     "before_ms_per_row": 0.00175,
+     "delta_ms_per_row": 0.0027,
+     "pct": 154.3,
+     "indexes": 1
     }
    }
   ],
   "cost_before": 75549.26,
   "cost_after": 9606.16,
   "improvement_pct": 87.3,
-  "time_before_ms": 111.18,
-  "time_after_ms": 30.95,
-  "write_latency_ms": null,
-  "storage_bytes": null,
-  "explanation": "Why it is slow: The GNN reads the plan as a graph and rates Seq Scan on t_438 as the bottleneck (100% of its score); the rule check agrees. Seq Scan on t_438 is the bottleneck: it handles about 176,832 rows and accounts for about 97.7% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=97.7, gnn_top3=[{'node_id': 7, 'op': 'Seq Scan', 'relation': 't_438', 'score': 1.0}, {'node_id': 6, 'op': 'Hash Join', 'relation': None, 'score': 0.0}, {'node_id': 9, 'op': 'Seq Scan', 'relation': 't_dcb', 'score': 0.0}], loops=1, picked_by=rules, plan_rows=176832, relation=t_438, self_cost=73838.33). Best fix: PARTITION t_438 BY RANGE (c_303) MONTHLY - Range filter on this column; partitions let the scan skip whole months: simulated cost 75,549 -> 9,606 (87.3% lower). The planner's estimated cost drops from 75,549 to 9,606, about 87% lower. 1 other option(s) were also considered.",
-  "explanation_unmasked": "Why it is slow: The GNN reads the plan as a graph and rates Seq Scan on orders as the bottleneck (100% of its score); the rule check agrees. Seq Scan on orders is the bottleneck: it handles about 176,832 rows and accounts for about 97.7% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=97.7, gnn_top3=[{'node_id': 7, 'op': 'Seq Scan', 'relation': 'orders', 'score': 1.0}, {'node_id': 6, 'op': 'Hash Join', 'relation': None, 'score': 0.0}, {'node_id': 9, 'op': 'Seq Scan', 'relation': 'products', 'score': 0.0}], loops=1, picked_by=rules, plan_rows=176832, relation=orders, self_cost=73838.33). Best fix: PARTITION orders BY RANGE (order_date) MONTHLY - Range filter on this column; partitions let the scan skip whole months: simulated cost 75,549 -> 9,606 (87.3% lower). The planner's estimated cost drops from 75,549 to 9,606, about 87% lower. 1 other option(s) were also considered.",
-  "deploy_sql": "PARTITION orders BY RANGE (order_date) MONTHLY",
+  "time_before_ms": 103.15,
+  "time_after_ms": 29.92,
+  "write_latency_ms": 0.00128,
+  "storage_bytes": 35176448,
+  "explanation": "Why it is slow: The GNN reads the plan as a graph and rates Seq Scan on t_438 as the bottleneck (100% of its score); the rule check agrees. Seq Scan on t_438 is the bottleneck: it handles about 176,832 rows and accounts for about 97.7% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=97.7, gnn_top3=[{'node_id': 7, 'op': 'Seq Scan', 'relation': 't_438', 'score': 1.0}, {'node_id': 6, 'op': 'Hash Join', 'relation': None, 'score': 0.0}, {'node_id': 9, 'op': 'Seq Scan', 'relation': 't_dcb', 'score': 0.0}], loops=1, picked_by=rules, plan_rows=176832, relation=t_438, self_cost=73838.33). Best fix: PARTITION t_438 BY RANGE (c_303) MONTHLY; CREATE INDEX ON t_438 (c_303) - Partition and index together: simulated cost 75,549 -> 9,606 (87.3% lower). The planner's estimated cost drops from 75,549 to 9,606, about 87% lower. 2 other option(s) were also considered.",
+  "explanation_unmasked": "Why it is slow: The GNN reads the plan as a graph and rates Seq Scan on orders as the bottleneck (100% of its score); the rule check agrees. Seq Scan on orders is the bottleneck: it handles about 176,832 rows and accounts for about 97.7% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=97.7, gnn_top3=[{'node_id': 7, 'op': 'Seq Scan', 'relation': 'orders', 'score': 1.0}, {'node_id': 6, 'op': 'Hash Join', 'relation': None, 'score': 0.0}, {'node_id': 9, 'op': 'Seq Scan', 'relation': 'products', 'score': 0.0}], loops=1, picked_by=rules, plan_rows=176832, relation=orders, self_cost=73838.33). Best fix: PARTITION orders BY RANGE (order_date) MONTHLY; CREATE INDEX ON orders (order_date) - Partition and index together: simulated cost 75,549 -> 9,606 (87.3% lower). The planner's estimated cost drops from 75,549 to 9,606, about 87% lower. 2 other option(s) were also considered.",
+  "deploy_sql": "PARTITION orders BY RANGE (order_date) MONTHLY; CREATE INDEX ON orders (order_date)",
   "deploy_scripts": [
+   "PARTITION orders BY RANGE (order_date) MONTHLY; CREATE INDEX ON orders (order_date)",
    "PARTITION orders BY RANGE (order_date) MONTHLY",
    "CREATE INDEX ON orders (order_date)"
+  ],
+  "deploy_rewrites": [
+   "",
+   "",
+   ""
   ],
   "leak_check": true,
   "match": {
@@ -1439,7 +1479,7 @@
    "source": "template",
    "prompt_leak_ok": true,
    "reply_leak_ok": null,
-   "latency_ms": 1.8,
+   "latency_ms": 1.6,
    "fallback_reason": "LLM unavailable: recording uses the template explanation"
   },
   "unsafe_rewrite": false,
@@ -1611,6 +1651,9 @@
   "deploy_scripts": [
    "SELECT customer_id, name, email FROM customers WHERE NOT EXISTS(SELECT 1 FROM orders AS n1 WHERE n1.customer_id = customers.customer_id)"
   ],
+  "deploy_rewrites": [
+   ""
+  ],
   "leak_check": true,
   "match": {
    "query_id": "q07",
@@ -1623,7 +1666,7 @@
    "source": "template",
    "prompt_leak_ok": true,
    "reply_leak_ok": null,
-   "latency_ms": 2.3,
+   "latency_ms": 2.2,
    "fallback_reason": "LLM unavailable: recording uses the template explanation"
   },
   "unsafe_rewrite": false,
@@ -1800,9 +1843,9 @@
     "cost_after": 43485.95,
     "improvement_pct": 50.2,
     "reward": 0.472,
-    "measured_ms_before": 196.32,
-    "measured_ms_after": 124.96,
-    "measured_gain_pct": 36.3,
+    "measured_ms_before": 214.06,
+    "measured_ms_after": 137.46,
+    "measured_gain_pct": 35.8,
     "planner_gain_pct": 50.2,
     "timing_note": "median of 5 sandbox runs each, same results",
     "summary": "Partition t_438 by c_303 (36% faster in measured sandbox time (planner estimated 50%); write cost not measured). Zero raw data exposed to the AI (masked metadata only).",
@@ -1812,8 +1855,8 @@
   "cost_before": 87344.77,
   "cost_after": 43485.95,
   "improvement_pct": 50.2,
-  "time_before_ms": 196.32,
-  "time_after_ms": 124.96,
+  "time_before_ms": 214.06,
+  "time_after_ms": 137.46,
   "write_latency_ms": null,
   "storage_bytes": null,
   "explanation": "Why it is slow: The GNN reads the plan as a graph and rates Seq Scan on t_438 as the bottleneck (100% of its score); the rule check agrees. Seq Scan on t_438 is the bottleneck: it handles about 693,160 rows and accounts for about 94.5% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=94.5, gnn_top3=[{'node_id': 4, 'op': 'Seq Scan', 'relation': 't_438', 'score': 1.0}, {'node_id': 3, 'op': 'Aggregate', 'relation': None, 'score': 0.0}, {'node_id': 1, 'op': 'Gather Merge', 'relation': None, 'score': 0.0}], loops=1, picked_by=rules, plan_rows=693160, relation=t_438, self_cost=82513.4). Best fix: PARTITION t_438 BY RANGE (c_303) MONTHLY - Range filter on this column; partitions let the scan skip whole months: simulated cost 87,345 -> 43,486 (50.2% lower). The planner's estimated cost drops from 87,345 to 43,486, about 50% lower.",
@@ -1821,6 +1864,9 @@
   "deploy_sql": "PARTITION orders BY RANGE (order_date) MONTHLY",
   "deploy_scripts": [
    "PARTITION orders BY RANGE (order_date) MONTHLY"
+  ],
+  "deploy_rewrites": [
+   ""
   ],
   "leak_check": true,
   "match": {
@@ -1834,7 +1880,7 @@
    "source": "template",
    "prompt_leak_ok": true,
    "reply_leak_ok": null,
-   "latency_ms": 1.0,
+   "latency_ms": 2.1,
    "fallback_reason": "LLM unavailable: recording uses the template explanation"
   },
   "unsafe_rewrite": false,
@@ -1956,31 +2002,37 @@
     "cost_after": 5679.17,
     "improvement_pct": 92.9,
     "reward": 0.869,
-    "measured_ms_before": 96.33,
-    "measured_ms_after": 1.02,
-    "measured_gain_pct": 98.9,
+    "measured_ms_before": 107.37,
+    "measured_ms_after": 0.84,
+    "measured_gain_pct": 99.2,
     "planner_gain_pct": 92.9,
     "timing_note": "median of 5 sandbox runs each, same results",
     "write_latency": {
-     "source": "estimated",
-     "note": "width-based write penalty, not measured"
+     "source": "measured",
+     "before_ms_per_row": 0.00225,
+     "delta_ms_per_row": 0.00552,
+     "pct": 245.3,
+     "indexes": 2
     },
-    "summary": "Add indexes on t_438 (c_328) and t_438 (c_720) (99% faster in measured sandbox time (planner estimated 93%), +2 index columns to maintain on writes (estimated, write penalty 0.06)). Zero raw data exposed to the AI (masked metadata only).",
+    "summary": "Add indexes on t_438 (c_328) and t_438 (c_720) (99% faster in measured sandbox time (planner estimated 93%), +0.00552 ms per inserted row, measured on the sandbox copy (+245% insert time)). Zero raw data exposed to the AI (masked metadata only).",
     "why_not": "Index on t_438(c_328) rejected: the planner would not use it - the simulated cost does not go down at all."
    }
   ],
   "cost_before": 80213.4,
   "cost_after": 5679.17,
   "improvement_pct": 92.9,
-  "time_before_ms": 96.33,
-  "time_after_ms": 1.02,
-  "write_latency_ms": null,
+  "time_before_ms": 107.37,
+  "time_after_ms": 0.84,
+  "write_latency_ms": 0.00552,
   "storage_bytes": null,
   "explanation": "Why it is slow: The GNN reads the plan as a graph and rates Seq Scan on t_438 as the bottleneck (100% of its score); the rule check agrees. Seq Scan on t_438 is the bottleneck: it handles about 691 rows and accounts for about 98.5% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=98.5, gnn_top3=[{'node_id': 1, 'op': 'Seq Scan', 'relation': 't_438', 'score': 1.0}, {'node_id': 0, 'op': 'Gather', 'relation': None, 'score': 0.0}], loops=1, picked_by=rules, plan_rows=691, relation=t_438, self_cost=79047.6). Best fix: CREATE INDEX ON t_438 (c_328); CREATE INDEX ON t_438 (c_720) - One index per OR branch: simulated cost 80,213 -> 5,679 (92.9% lower). The planner's estimated cost drops from 80,213 to 5,679, about 93% lower.",
   "explanation_unmasked": "Why it is slow: The GNN reads the plan as a graph and rates Seq Scan on orders as the bottleneck (100% of its score); the rule check agrees. Seq Scan on orders is the bottleneck: it handles about 691 rows and accounts for about 98.5% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=98.5, gnn_top3=[{'node_id': 1, 'op': 'Seq Scan', 'relation': 'orders', 'score': 1.0}, {'node_id': 0, 'op': 'Gather', 'relation': None, 'score': 0.0}], loops=1, picked_by=rules, plan_rows=691, relation=orders, self_cost=79047.6). Best fix: CREATE INDEX ON orders (product_id); CREATE INDEX ON orders (customer_id) - One index per OR branch: simulated cost 80,213 -> 5,679 (92.9% lower). The planner's estimated cost drops from 80,213 to 5,679, about 93% lower.",
   "deploy_sql": "CREATE INDEX ON orders (product_id); CREATE INDEX ON orders (customer_id)",
   "deploy_scripts": [
    "CREATE INDEX ON orders (product_id); CREATE INDEX ON orders (customer_id)"
+  ],
+  "deploy_rewrites": [
+   ""
   ],
   "leak_check": true,
   "match": {
@@ -1994,7 +2046,7 @@
    "source": "template",
    "prompt_leak_ok": true,
    "reply_leak_ok": null,
-   "latency_ms": 2.5,
+   "latency_ms": 0.8,
    "fallback_reason": "LLM unavailable: recording uses the template explanation"
   },
   "unsafe_rewrite": false,
@@ -2150,16 +2202,19 @@
     "cost_after": 3735.82,
     "improvement_pct": 95.3,
     "reward": 0.893,
-    "measured_ms_before": 110.76,
-    "measured_ms_after": 1.29,
-    "measured_gain_pct": 98.8,
+    "measured_ms_before": 98.27,
+    "measured_ms_after": 1.28,
+    "measured_gain_pct": 98.7,
     "planner_gain_pct": 95.3,
     "timing_note": "median of 5 sandbox runs each, same results",
     "write_latency": {
-     "source": "estimated",
-     "note": "width-based write penalty, not measured"
+     "source": "measured",
+     "before_ms_per_row": 0.00153,
+     "delta_ms_per_row": 0.00208,
+     "pct": 135.9,
+     "indexes": 1
     },
-    "summary": "Add composite index on t_438 (c_328, c_e7e) (99% faster in measured sandbox time (planner estimated 95%), +2 index columns to maintain on writes (estimated, write penalty 0.06)). Zero raw data exposed to the AI (masked metadata only).",
+    "summary": "Add composite index on t_438 (c_328, c_e7e) (99% faster in measured sandbox time (planner estimated 95%), +0.00208 ms per inserted row, measured on the sandbox copy (+136% insert time)). Zero raw data exposed to the AI (masked metadata only).",
     "why_not": "Index on t_438(c_328) not chosen: it cuts the simulated cost by only 94% vs 95% for the chosen fix."
    },
    {
@@ -2174,9 +2229,9 @@
     "cost_after": 5155.74,
     "improvement_pct": 93.6,
     "reward": 0.906,
-    "measured_ms_before": 110.76,
-    "measured_ms_after": 1.96,
-    "measured_gain_pct": 98.2,
+    "measured_ms_before": 98.27,
+    "measured_ms_after": 1.38,
+    "measured_gain_pct": 98.6,
     "planner_gain_pct": 93.6,
     "timing_note": "median of 5 sandbox runs each, same results"
    }
@@ -2184,9 +2239,9 @@
   "cost_before": 80189.1,
   "cost_after": 3735.82,
   "improvement_pct": 95.3,
-  "time_before_ms": 110.76,
-  "time_after_ms": 1.29,
-  "write_latency_ms": 0.00359,
+  "time_before_ms": 98.27,
+  "time_after_ms": 1.28,
+  "write_latency_ms": 0.00208,
   "storage_bytes": 36077568,
   "explanation": "Why it is slow: The GNN reads the plan as a graph and rates Seq Scan on t_438 as the bottleneck (100% of its score); the rule check agrees. Seq Scan on t_438 is the bottleneck: it handles about 430 rows and accounts for about 98.6% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=98.6, gnn_top3=[{'node_id': 3, 'op': 'Seq Scan', 'relation': 't_438', 'score': 0.998}, {'node_id': 1, 'op': 'Gather Merge', 'relation': None, 'score': 0.002}, {'node_id': 2, 'op': 'Sort', 'relation': None, 'score': 0.0}], loops=1, picked_by=rules, plan_rows=430, relation=t_438, self_cost=79047.6). Best fix: CREATE INDEX ON t_438 (c_328, c_e7e) - Several exact-match filters: simulated cost 80,189 -> 3,736 (95.3% lower). The planner's estimated cost drops from 80,189 to 3,736, about 95% lower. 1 other option(s) were also considered.",
   "explanation_unmasked": "Why it is slow: The GNN reads the plan as a graph and rates Seq Scan on orders as the bottleneck (100% of its score); the rule check agrees. Seq Scan on orders is the bottleneck: it handles about 430 rows and accounts for about 98.6% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=98.6, gnn_top3=[{'node_id': 3, 'op': 'Seq Scan', 'relation': 'orders', 'score': 0.998}, {'node_id': 1, 'op': 'Gather Merge', 'relation': None, 'score': 0.002}, {'node_id': 2, 'op': 'Sort', 'relation': None, 'score': 0.0}], loops=1, picked_by=rules, plan_rows=430, relation=orders, self_cost=79047.6). Best fix: CREATE INDEX ON orders (product_id, status) - Several exact-match filters: simulated cost 80,189 -> 3,736 (95.3% lower). The planner's estimated cost drops from 80,189 to 3,736, about 95% lower. 1 other option(s) were also considered.",
@@ -2194,6 +2249,10 @@
   "deploy_scripts": [
    "CREATE INDEX ON orders (product_id, status)",
    "CREATE INDEX ON orders (product_id)"
+  ],
+  "deploy_rewrites": [
+   "",
+   ""
   ],
   "leak_check": true,
   "match": {
@@ -2207,7 +2266,7 @@
    "source": "template",
    "prompt_leak_ok": true,
    "reply_leak_ok": null,
-   "latency_ms": 2.8,
+   "latency_ms": 1.1,
    "fallback_reason": "LLM unavailable: recording uses the template explanation"
   },
   "unsafe_rewrite": false,
@@ -2494,12 +2553,12 @@
     "cost_after": 5268.31,
     "improvement_pct": 93.9,
     "reward": 0.909,
-    "measured_ms_before": 114.78,
-    "measured_ms_after": 34.97,
-    "measured_gain_pct": 69.5,
+    "measured_ms_before": 120.36,
+    "measured_ms_after": 33.25,
+    "measured_gain_pct": 72.4,
     "planner_gain_pct": 93.9,
     "timing_note": "median of 5 sandbox runs each, same results",
-    "summary": "Partition t_438 by c_303 (70% faster in measured sandbox time (planner estimated 94%); write cost not measured). Zero raw data exposed to the AI (masked metadata only).",
+    "summary": "Partition t_438 by c_303 (72% faster in measured sandbox time (planner estimated 94%); write cost not measured),  and rewrite the query (filter join to exists) (1.1x faster measured, same results). Numbers are per fix, measured separately. Zero raw data exposed to the AI (masked metadata only).",
     "why_not": "Index on t_438(c_13b) rejected: c_13b has only about 10 distinct values (10% of rows per value), so the planner would still read much of the table (simulated cost drop 18% vs 94% for the chosen fix)."
    },
    {
@@ -2514,30 +2573,58 @@
     "cost_after": 70796.77,
     "improvement_pct": 17.5,
     "reward": 0.145,
-    "measured_ms_before": 114.78,
-    "measured_ms_after": 136.64,
-    "measured_gain_pct": -19.0,
+    "measured_ms_before": 120.36,
+    "measured_ms_after": 127.78,
+    "measured_gain_pct": -6.2,
     "planner_gain_pct": 17.5,
     "timing_note": "median of 5 sandbox runs each, same results",
     "write_latency": {
-     "source": "estimated",
-     "note": "width-based write penalty, not measured"
+     "source": "measured",
+     "before_ms_per_row": 0.00176,
+     "delta_ms_per_row": 0.0018,
+     "pct": 102.3,
+     "indexes": 1
     }
+   },
+   {
+    "kind": "rewrite",
+    "action": "SELECT a2.c_2e4 AS x1, DATE_TRUNC('WEEK', a1.c_303) AS x2, a3.c_de3, COUNT(DISTINCT a1.c_720) AS x3, SUM(a1.c_c37) AS x4 FROM t_438 AS a1 JOIN t_b78 AS a2 ON a2.c_13b = a1.c_13b JOIN t_dcb AS a3 ON a3.c_328 = a1.c_328 WHERE a1.c_13b = $1 AND a1.c_303 >= $2 AND EXISTS(SELECT 1 FROM t_491 AS a4 WHERE a4.c_720 = a1.c_720 AND a4.c_fdf <> $3) GROUP BY a2.c_2e4, x2, a3.c_de3 ORDER BY x2, x4 DESC",
+    "cost_before": 85863.84,
+    "novelty": "unseen shape (lower confidence)",
+    "agent_score": 0.986,
+    "write_penalty": 0.0,
+    "rule_label": "filter join to exists",
+    "cost_after": 85863.84,
+    "verified_by": "timed_run",
+    "same_results": true,
+    "time_before_ms": 120.4,
+    "time_after_ms": 108.8,
+    "speedup": 1.11,
+    "verify_note": "same results, 120 ms -> 109 ms (1.1x faster)",
+    "reason": "A table is joined only to check a condition; none of its columns are used. EXISTS asks 'is there a matching row that passes?' and stops at the first one. Same result when the join key is unique (checked by the timed same-results run). Same results, 120 ms -> 109 ms (1.1x faster).",
+    "improvement_pct": 9.9,
+    "reward": 0.099
    }
   ],
   "cost_before": 85863.84,
   "cost_after": 5268.31,
   "improvement_pct": 93.9,
-  "time_before_ms": 114.78,
-  "time_after_ms": 34.97,
+  "time_before_ms": 120.36,
+  "time_after_ms": 33.25,
   "write_latency_ms": null,
   "storage_bytes": null,
-  "explanation": "Why it is slow: The GNN reads the plan as a graph and rates Seq Scan on t_438 as the bottleneck (97% of its score); the rule check agrees. Seq Scan on t_438 is the bottleneck: it handles about 7,366 rows and accounts for about 92.1% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=92.1, gnn_top3=[{'node_id': 8, 'op': 'Seq Scan', 'relation': 't_438', 'score': 0.974}, {'node_id': 10, 'op': 'Seq Scan', 'relation': 't_491', 'score': 0.013}, {'node_id': 7, 'op': 'Hash Join', 'relation': None, 'score': 0.008}], loops=1, picked_by=rules, plan_rows=7366, relation=t_438, self_cost=79047.6). Best fix: PARTITION t_438 BY RANGE (c_303) MONTHLY - Range filter on this column; partitions let the scan skip whole months: simulated cost 85,864 -> 5,268 (93.9% lower). The planner's estimated cost drops from 85,864 to 5,268, about 94% lower. 1 other option(s) were also considered.",
-  "explanation_unmasked": "Why it is slow: The GNN reads the plan as a graph and rates Seq Scan on orders as the bottleneck (97% of its score); the rule check agrees. Seq Scan on orders is the bottleneck: it handles about 7,366 rows and accounts for about 92.1% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=92.1, gnn_top3=[{'node_id': 8, 'op': 'Seq Scan', 'relation': 'orders', 'score': 0.974}, {'node_id': 10, 'op': 'Seq Scan', 'relation': 'customers', 'score': 0.013}, {'node_id': 7, 'op': 'Hash Join', 'relation': None, 'score': 0.008}], loops=1, picked_by=rules, plan_rows=7366, relation=orders, self_cost=79047.6). Best fix: PARTITION orders BY RANGE (order_date) MONTHLY - Range filter on this column; partitions let the scan skip whole months: simulated cost 85,864 -> 5,268 (93.9% lower). The planner's estimated cost drops from 85,864 to 5,268, about 94% lower. 1 other option(s) were also considered.",
+  "explanation": "Why it is slow: The GNN reads the plan as a graph and rates Seq Scan on t_438 as the bottleneck (97% of its score); the rule check agrees. Seq Scan on t_438 is the bottleneck: it handles about 7,366 rows and accounts for about 92.1% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=92.1, gnn_top3=[{'node_id': 8, 'op': 'Seq Scan', 'relation': 't_438', 'score': 0.974}, {'node_id': 10, 'op': 'Seq Scan', 'relation': 't_491', 'score': 0.013}, {'node_id': 7, 'op': 'Hash Join', 'relation': None, 'score': 0.008}], loops=1, picked_by=rules, plan_rows=7366, relation=t_438, self_cost=79047.6). Best fix: PARTITION t_438 BY RANGE (c_303) MONTHLY - Range filter on this column; partitions let the scan skip whole months: simulated cost 85,864 -> 5,268 (93.9% lower). The planner's estimated cost drops from 85,864 to 5,268, about 94% lower. 2 other option(s) were also considered.",
+  "explanation_unmasked": "Why it is slow: The GNN reads the plan as a graph and rates Seq Scan on orders as the bottleneck (97% of its score); the rule check agrees. Seq Scan on orders is the bottleneck: it handles about 7,366 rows and accounts for about 92.1% of the plan's estimated cost. (evidence: actual_rows=None, cost_share_pct=92.1, gnn_top3=[{'node_id': 8, 'op': 'Seq Scan', 'relation': 'orders', 'score': 0.974}, {'node_id': 10, 'op': 'Seq Scan', 'relation': 'customers', 'score': 0.013}, {'node_id': 7, 'op': 'Hash Join', 'relation': None, 'score': 0.008}], loops=1, picked_by=rules, plan_rows=7366, relation=orders, self_cost=79047.6). Best fix: PARTITION orders BY RANGE (order_date) MONTHLY - Range filter on this column; partitions let the scan skip whole months: simulated cost 85,864 -> 5,268 (93.9% lower). The planner's estimated cost drops from 85,864 to 5,268, about 94% lower. 2 other option(s) were also considered.",
   "deploy_sql": "PARTITION orders BY RANGE (order_date) MONTHLY",
   "deploy_scripts": [
    "PARTITION orders BY RANGE (order_date) MONTHLY",
-   "CREATE INDEX ON orders (region_id)"
+   "CREATE INDEX ON orders (region_id)",
+   "SELECT a2.name AS x1, DATE_TRUNC('WEEK', a1.order_date) AS x2, a3.category, COUNT(DISTINCT a1.customer_id) AS x3, SUM(a1.amount) AS x4 FROM orders AS a1 JOIN regions AS a2 ON a2.region_id = a1.region_id JOIN products AS a3 ON a3.product_id = a1.product_id WHERE a1.region_id = 3 AND a1.order_date >= '2026-09-01' AND EXISTS(SELECT 1 FROM customers AS a4 WHERE a4.customer_id = a1.customer_id AND a4.segment <> 'small_business') GROUP BY a2.name, x2, a3.category ORDER BY x2, x4 DESC"
+  ],
+  "deploy_rewrites": [
+   "",
+   "",
+   ""
   ],
   "leak_check": true,
   "match": {
@@ -2551,7 +2638,7 @@
    "source": "template",
    "prompt_leak_ok": true,
    "reply_leak_ok": null,
-   "latency_ms": 1.5,
+   "latency_ms": 2.9,
    "fallback_reason": "LLM unavailable: recording uses the template explanation"
   },
   "unsafe_rewrite": false,
