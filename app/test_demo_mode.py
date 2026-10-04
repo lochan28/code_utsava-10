@@ -113,6 +113,24 @@ def test_switching_demo_mode_on_mid_session_sends_the_next_question_to_the_recor
         assert demo_mode.LABEL in [i.value for i in at.info]
 
 
+def test_every_answer_says_whether_it_is_live_or_recorded_even_after_switching_modes():
+    from app.test_approve import approve_result
+    live = approve_result()
+    live["ai_inputs"] = {"time_fn": "failed: rewrites are unverified", "stats": "used", "column_types": "used"}
+    with demo_page(demo=False, warmups=[]) as at:
+        with patched(pipeline, "analyze", lambda q: live):
+            ask(at, WEEKLY)                                           # a LIVE answer (here a stand-in with time_fn failed)
+        assert demo_mode.LIVE_LABEL in [c.value for c in at.caption] and demo_mode.LABEL not in [i.value for i in at.info]
+        assert "time_fn: failed" in page_text(at)
+        at.session_state[demo_mode.DEMO_MODE_KEY] = True
+        at.run()
+        ask(at, WEEKLY)                                               # a RECORDED answer (pipeline.analyze would explode)
+        captions = [c.value for c in at.caption]
+        assert captions.count(demo_mode.LIVE_LABEL) == 1 and [i.value for i in at.info].count(demo_mode.LABEL) == 1
+        text = page_text(at)
+        assert "time_fn: failed" in text and "time_fn: used" in text           # the old live answer stays, labelled live
+
+
 def test_approve_still_works_in_demo_mode_and_runs_nothing():
     with demo_page() as at:
         ask(at, WEEKLY)

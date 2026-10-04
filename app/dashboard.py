@@ -124,18 +124,19 @@ def render_rec(rec, top):
                 st.badge("top pick", icon=":material/star:", color="green")
         with c_fix:
             action = rec.get("action")
-            if isinstance(action, str) and action.strip() and rec.get("combined"):
+            has_action = isinstance(action, str) and bool(action.strip())
+            if has_action and rec.get("combined"):
                 for number, step in enumerate(action.split("; "), 1):      # a combined fix: show BOTH steps
                     st.caption(f"Step {number} of 2" if number <= 2 else f"Step {number}")
                     st.code(step, language="sql")
-            elif isinstance(action, str) and action.strip():
+            elif has_action:
                 st.code(action, language="sql")
+            else:
+                st.caption("No fix text (the masked SQL could not be analysed).")
             if isinstance(rec.get("rewrite_sql"), str) and rec["rewrite_sql"].strip():     # timed together with the fix
                 rule = rec.get("rewrite_rule") if isinstance(rec.get("rewrite_rule"), str) else ""
                 st.caption("Also rewrite the query" + (f" ({md_safe(rule)})" if rule else "") + ":")
                 st.code(rec["rewrite_sql"], language="sql")
-            else:
-                st.caption("No fix text (the masked SQL could not be analysed).")
         with c_reason:
             reason = rec.get("reason")
             st.markdown(md_safe(reason) if isinstance(reason, str) and reason else "No reason given.")
@@ -443,4 +444,6 @@ for position, entry in enumerate(st.session_state.history):
         else:
             if entry["result"].get("demo"):
                 st.info(demo_mode.LABEL, icon=":material/movie:")
+            else:                          # the history survives switching Demo mode: say where each answer came from
+                st.caption(demo_mode.LIVE_LABEL)
             render_result(entry["result"], key=position, approvable=True)
