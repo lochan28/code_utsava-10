@@ -19,17 +19,20 @@ brackets. `recommend()` now does the same check itself when the pipeline passes 
 
 | Query | Fix (masked) | Before ms | After ms | Speedup | **Measured drop** | Measured, all runs | Planner estimate | Trust ratio (planner / measured) | Same results |
 |---|---|---:|---:|---:|---:|---|---:|---:|---|
-| q11 | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 87.5 (84.0-102.3) | 45.2 (43.2-56.2) | 1.9x | **48.3%** | 58.0%, 48.3% | 93.9% | **1.94** (over) | yes |
-| q03 | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY; CREATE INDEX ON t_1c1 (c_073, c_02b)` | 72.3 (68.9-75.2) | 2.1 (0.8-2.2) | 33.6x | **97.0%** | 98.3%, 97.0% | 98.2% | **1.01** | yes |
-| q01 | `CREATE INDEX ON t_1c1 (c_1e3)` | 62.2 (56.0-66.5) | 7.7 (3.0-10.2) | 8.1x | **87.7%** | 91.0%, 87.7% | 85.2% | **0.97** | yes |
-| q02 | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY; CREATE INDEX ON t_1c1 (c_02b)` | 99.7 (88.3-100.7) | 36.7 (32.1-39.9) | 2.7x | **63.2%** | 63.6%, 63.2% | 94.1% | **1.49** (over) | yes |
-| q06 | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 81.3 (76.0-82.8) | 20.5 (19.1-21.6) | 4.0x | **74.8%** | 68.3%, 74.8% | 87.3% | **1.17** | yes |
-| q08 | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 181.7 (171.3-195.2) | 123.2 (115.1-126.3) | 1.5x | **32.2%** | 37.4%, 32.2% | 50.2% | **1.56** (over) | yes |
+| q11 | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY; CREATE INDEX ON t_1c1 (c_0b8)` + rewrite (filter join to exists) | 94.9 (81.3-97.8) | 43.6 (27.0-53.8) | 2.2x | **54.0%** | 66.3%, 54.0% | 96.3% | **1.78** (over) | yes |
+| q03 | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY; CREATE INDEX ON t_1c1 (c_073, c_02b)` | 76.1 (70.7-77.8) | 2.0 (1.0-2.6) | 37.7x | **97.3%** | 97.2%, 97.3% | 98.2% | **1.01** | yes |
+| q01 | `CREATE INDEX ON t_1c1 (c_1e3)` | 68.9 (65.3-72.1) | 6.0 (3.6-7.5) | 11.5x | **91.3%** | 89.3%, 91.3% | 85.2% | **0.93** | yes |
+| q02 | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 107.3 (95.6-114.7) | 40.3 (37.9-43.5) | 2.7x | **62.4%** | 58.6%, 62.4% | 94.4% | **1.51** (over) | yes |
+| q06 | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 80.3 (75.2-83.9) | 19.6 (19.1-21.7) | 4.1x | **75.6%** | 66.2%, 75.6% | 87.3% | **1.15** | yes |
+| q08 | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 182.4 (173.9-186.3) | 121.4 (118.2-130.8) | 1.5x | **33.5%** | 33.4%, 33.5% | 50.2% | **1.50** (over) | yes |
 
-**4 of 6 winners are more than 50% faster in measured time in the latest run** (4 of 6 in every run), all with identical results.
+1 winner(s) are a fix **timed together with a same-result query rewrite** (`rewrite_sql`): the after
+time is the rewritten query on the fixed sandbox copy. `recommend()` offers that only when it measures fastest.
 
-**Trust score:** the planner overestimates partition gains by about **1.34x to 1.43x on average** in our runs (planner % / measured %, averaged over the 5 partition winners, incl. partition + index). Index winners: 0.94x, 0.97x. **This is 6 samples per run, 2 runs** - an
-indication, not a calibration. Biggest gaps: q11 (planner 94%, measured 48%), q02 (planner 94%, measured 63%).
+**5 of 6 winners are more than 50% faster in measured time in the latest run** (5 of 6 in every run), all with identical results.
+
+**Trust score:** the planner overestimates partition gains by about **1.38x to 1.39x on average** in our runs (planner % / measured %, averaged over the 5 partition winners, incl. partition + index). Index winners: 0.95x, 0.93x. **This is 6 samples per run, 2 runs** - an
+indication, not a calibration. Biggest gaps: q11 (planner 96%, measured 54%), q02 (planner 94%, measured 62%).
 Treat planner numbers (sections 2 and 4) as a ranking signal; measured numbers are the real effect.
 
 ## 1. Rewrites: real time + same results (Person 1 `checked_run()`)
@@ -54,20 +57,20 @@ Person 1 `measure_write_latency()` for the final index fix. Drop / write cost = 
 
 | Query | Split | Top fix (masked) | Planner cost drop (range) | Measured gain (this run) | Measured write cost (range, insert time) | verified_by | Novelty |
 |---|---|---|---:|---:|---:|---|---|
-| q11 | held-out | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 66.8% to 96.3% | 53.5% | not measured (partition) | `timed_run` | unseen shape (lower confidence) |
-| q03 | held-out | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY; CREATE INDEX ON t_1c1 (c_073, c_02b)` | 96.0% to 98.2% | 98.4% | not measured (partition) | `timed_run` | seen query shape |
-| q01 | train | `CREATE INDEX ON t_1c1 (c_1e3)` | 82.7% to 85.2% | 91.5% | +104% to +215% | `timed_run` | seen query shape |
-| q02 | train | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY; CREATE INDEX ON t_1c1 (c_02b)` | 73.2% to 94.4% | 66.0% | not measured (partition) | `timed_run` | unseen shape (lower confidence) |
-| q06 | held-out | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 83.8% to 87.3% | 77.5% | not measured (partition) | `timed_run` | seen query shape |
-| q09 | train | `CREATE INDEX ON t_1c1 (c_1e3); CREATE INDEX ON t_1c1 (c_c3a)` | 92.9% to 93.3% | 99.0% | +54% to +340% | `timed_run` | seen query shape |
-| q10 | train | `CREATE INDEX ON t_1c1 (c_073, c_c3a)` | 93.9% to 95.6% | 99.0% | +2% to +245% | `timed_run` | unseen shape (lower confidence) |
-| q08 | train | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 47.4% to 50.2% | 34.5% | not measured (partition) | `timed_run` | seen query shape |
+| q11 | held-out | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY; CREATE INDEX ON t_1c1 (c_0b8)` + rewrite (filter join to exists) | 66.8% to 96.3% | 52.6% | not measured (partition) | `timed_run` | unseen shape (lower confidence) |
+| q03 | held-out | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY; CREATE INDEX ON t_1c1 (c_073, c_02b)` | 96.0% to 98.2% | 97.4% | not measured (partition) | `timed_run` | seen query shape |
+| q01 | train | `CREATE INDEX ON t_1c1 (c_1e3)` | 82.7% to 85.2% | 92.9% | +104% to +215% | `timed_run` | seen query shape |
+| q02 | train | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 73.2% to 94.4% | 71.0% | not measured (partition) | `timed_run` | unseen shape (lower confidence) |
+| q06 | held-out | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 83.8% to 87.3% | 81.0% | not measured (partition) | `timed_run` | seen query shape |
+| q09 | train | `CREATE INDEX ON t_1c1 (c_1e3); CREATE INDEX ON t_1c1 (c_c3a)` | 92.9% to 93.3% | 99.4% | +54% to +340% | `timed_run` | seen query shape |
+| q10 | train | `CREATE INDEX ON t_1c1 (c_073, c_c3a)` | 93.9% to 95.6% | 99.5% | +2% to +245% | `timed_run` | unseen shape (lower confidence) |
+| q08 | train | `PARTITION t_1c1 BY RANGE (c_02b) MONTHLY` | 47.4% to 50.2% | 35.0% | not measured (partition) | `timed_run` | seen query shape |
 
-q11 (the problem statement's example), `summary` (latest run): _Partition t_1c1 by c_02b (54% faster in measured sandbox time (planner estimated 94%); write cost not measured). Zero raw data exposed to the AI (masked metadata only)._
+q11 (the problem statement's example), `summary` (latest run): _Partition t_1c1 by c_02b and add index on t_1c1 (c_0b8) and rewrite the query (filter join to exists) (53% faster in measured sandbox time (planner estimated 96%); write cost not measured). Zero raw data exposed to the AI (masked metadata only)._
 
-q11, `why_not`: _Index on t_1c1(c_0b8) rejected: c_0b8 has only about 10 distinct values (10% of rows per value), so the planner would still read much of the table (simulated cost drop 18% vs 94% for the chosen fix)._
+q11, `why_not`: _Partitioning t_1c1 by c_02b not chosen: a smaller change does as well or better (simulated cost drop 95% vs 96% for the chosen fix)._
 
-q01, `summary` with a measured write cost (latest run): _Add index on t_1c1 (c_1e3) (92% faster in measured sandbox time (planner estimated 85%), +0.00207 ms per inserted row, measured on the sandbox copy (+104% insert time)). Zero raw data exposed to the AI (masked metadata only)._
+q01, `summary` with a measured write cost (latest run): _Add index on t_1c1 (c_1e3) (93% faster in measured sandbox time (planner estimated 85%), +0.00243 ms per inserted row, measured on the sandbox copy (+142% insert time)). Zero raw data exposed to the AI (masked metadata only)._
 
 ## 3. Bottleneck detection on the 11 real plans
 Command: `python p3_evidence.py bottleneck`. `EXPLAIN (ANALYZE, FORMAT JSON)`, masked. Label = step with the highest
@@ -170,11 +173,11 @@ Observed today (earlier runs + every fresh run of section 2):
 
 | Number | Observed values | Conservative headline |
 |---|---|---|
-| q11 partition cost drop | 73.9%, 73.9%, 73.9%, 92.1%, 91.2%, 91.2%, 96.3%, 93.9%, 92.2%, 84.6%, 92.2%, 66.8%, 91.2% | **66.8%** |
-| q02 partition cost drop | 73.2%, 73.2%, 73.2%, 91.9%, 91.2%, 91.2%, 94.4%, 94.1%, 92.0%, 92.0%, 92.0% | **73.2%** |
-| q10 index write cost (insert time) | +203%, +97%, +53%, +123%, +146%, +94%, +245%, +112%, +58%, +73%, +120%, +2%, +66% | **+245%** |
-| q01 index write cost (insert time) | +161%, +156%, +215%, +129%, +145%, +180%, +139%, +104%, +210%, +180%, +129% | **+215%** |
-| q09 index write cost (insert time) | +340%, +188%, +177%, +105%, +54%, +127%, +91%, +285%, +212%, +231% | **+340%** |
+| q11 partition cost drop | 73.9%, 73.9%, 73.9%, 92.1%, 91.2%, 91.2%, 96.3%, 93.9%, 96.3%, 92.2%, 84.6%, 92.2%, 66.8%, 91.2% | **66.8%** |
+| q02 partition cost drop | 73.2%, 73.2%, 73.2%, 91.9%, 91.2%, 91.2%, 94.4%, 94.1%, 94.4%, 92.0%, 92.0%, 92.0% | **73.2%** |
+| q10 index write cost (insert time) | +203%, +97%, +53%, +123%, +146%, +94%, +245%, +112%, +112%, +58%, +73%, +120%, +2%, +66% | **+245%** |
+| q01 index write cost (insert time) | +161%, +156%, +215%, +129%, +145%, +180%, +139%, +104%, +142%, +210%, +180%, +129% | **+215%** |
+| q09 index write cost (insert time) | +340%, +188%, +177%, +105%, +54%, +127%, +91%, +285%, +225%, +212%, +231% | **+340%** |
 
 Why: each time the sandbox's partitioned copy is rebuilt (teammates / `generate.py` drop stale copies),
 Person 1's code runs `ANALYZE`, which **samples rows at random**, so the planner's statistics and cost
@@ -206,12 +209,18 @@ Index costs (HypoPG) did not vary.
 | Masked | Real |
 |---|---|
 | `c_02b` | `order_date` |
+| `c_03e` | `segment` |
 | `c_073` | `status` |
 | `c_0b8` | `region_id` |
 | `c_1e3` | `customer_id` |
+| `c_82a` | `name` |
 | `c_c3a` | `product_id` |
+| `c_cf3` | `amount` |
+| `c_edb` | `category` |
+| `t_0a3` | `products` |
 | `t_1c1` | `orders` |
 | `t_21e` | `customers` |
+| `t_f23` | `regions` |
 
 ## 9. Leak check of the whole ai/ folder
 Command: `python p3_write.py`. Searched: the 4 sales table names and their distinctive column names,
@@ -262,13 +271,19 @@ Every hit:
 | README.md | 26 | everyday word | everyday-word use |
 | README.md | 38 | everyday word | everyday-word use |
 | README.md | 163 | everyday word | everyday-word use |
-| RESULTS.md | 208 | sales name | un-masked section (allowed) |
-| RESULTS.md | 209 | everyday word | un-masked section (allowed) |
-| RESULTS.md | 210 | sales name | un-masked section (allowed) |
 | RESULTS.md | 211 | sales name | un-masked section (allowed) |
 | RESULTS.md | 212 | sales name | un-masked section (allowed) |
-| RESULTS.md | 213 | sales name | un-masked section (allowed) |
+| RESULTS.md | 213 | everyday word | un-masked section (allowed) |
 | RESULTS.md | 214 | sales name | un-masked section (allowed) |
+| RESULTS.md | 215 | sales name | un-masked section (allowed) |
+| RESULTS.md | 216 | everyday word | un-masked section (allowed) |
+| RESULTS.md | 217 | sales name | un-masked section (allowed) |
+| RESULTS.md | 218 | sales name | un-masked section (allowed) |
+| RESULTS.md | 219 | everyday word | un-masked section (allowed) |
+| RESULTS.md | 220 | sales name | un-masked section (allowed) |
+| RESULTS.md | 221 | sales name | un-masked section (allowed) |
+| RESULTS.md | 222 | sales name | un-masked section (allowed) |
+| RESULTS.md | 223 | sales name | un-masked section (allowed) |
 | rewrite.py | 46 | everyday word | everyday-word use |
 | rewrite.py | 142 | everyday word | everyday-word use |
 | rewrite.py | 148 | everyday word | everyday-word use |
@@ -279,10 +294,10 @@ Every hit:
 | rl.py | 127 | everyday word | everyday-word use |
 | rl.py | 344 | everyday word | everyday-word use |
 | rl.py | 380 | everyday word | everyday-word use |
-| rl.py | 709 | everyday word | everyday-word use |
-| rl.py | 711 | everyday word | everyday-word use |
-| rl.py | 714 | everyday word | everyday-word use |
-| rl.py | 716 | everyday word | everyday-word use |
+| rl.py | 751 | everyday word | everyday-word use |
+| rl.py | 753 | everyday word | everyday-word use |
+| rl.py | 756 | everyday word | everyday-word use |
+| rl.py | 758 | everyday word | everyday-word use |
 | sqlinfo.py | 4 | everyday word | everyday-word use |
 | sqlinfo.py | 40 | everyday word | everyday-word use |
 | sqlinfo.py | 44 | everyday word | everyday-word use |
