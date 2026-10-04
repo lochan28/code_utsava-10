@@ -8,3 +8,4 @@ requests>=2.32
 #   pip install torch --index-url https://download.pytorch.org/whl/cu128
 torch>=2.7
 torch_geometric>=2.6
+openpyxl>=3.1   # only db/retail.py (reads the UCI Online Retail II Excel file)

@@ -110,7 +110,9 @@ pattern (email, card number). Other sensitive formats need their own pattern.
 - HypoPG simulates indexes only; partitioning is simulated on a partitioned
   copy of `orders` in its own schema (`part_orders_order_date`).
 - Sharding needs several servers; partitioning is shown as its single-machine form.
-- Data is synthetic (seeded, reproducible); no real customer data is used.
+- The main demo data (`sales`) is synthetic (seeded, reproducible). A real public
+  dataset (`retail`, below) is checked at the **sandbox level only**: the dashboard,
+  masking and RL agent still run on `sales`.
 
 ## Results
 _Full per-query results: [ai/RESULTS.md](ai/RESULTS.md). Fill in the final table after the last merge._
@@ -131,3 +133,24 @@ metrics. We checked HypoPG's estimates against the real index built on the sandb
   on the sandbox copy (`sandbox.index_size_bytes`), never on live tables.
 - **Write latency is small but noisy:** ~2–3 µs extra per inserted row, with a
   run-to-run spread of up to ~2.4 µs. Report it as an approximate range, not an exact value.
+
+### Real-world data check (`python -m db.retail_queries`, ~9 s)
+Does it work beyond our synthetic shop? We loaded **UCI Online Retail II** (dataset
+#502): real sales of a UK online gift shop, Dec 2009 – Dec 2011, into a separate
+database `retail` (1,033,036 invoice lines, 53,628 invoices, 5,942 customers). Real
+mess is kept: 8,752 guest invoices, 8,292 cancellations. Rebuild with
+`python -m db.retail` (needs the 45 MB file from archive.ics.uci.edu; `sales` is untouched).
+Every "after" returns identical rows (checksum-verified).
+
+| | Real question | Before | After | Faster | Fix |
+|---|---|---:|---:|---:|---|
+| r01 | Purchase history of one customer | 27.3 ms | 2.5 ms | 91% | `invoice_lines(invoice_no)` + `invoices(customer_id)` |
+| r02 | Monthly sales of the best seller | 31.1 ms | 11.1 ms | 64% | `invoice_lines(stock_code)` |
+| r03 | Top 10 products, Christmas 2010 | 31.1 ms | 25.7 ms | 17–53% (unstable) | `invoices(invoice_date)` + `invoice_lines(invoice_no)` |
+| r04 | Revenue by country, 2011 | 81.5 ms | – | – | none: reads most of the data, correctly no fix |
+| r05 | Last purchase of each German customer | 236.4 ms | 1.5 ms | 99% | `invoices(customer_id)` |
+
+- **r01, r02, r05: 64–99% faster** on real data. r03 varies between runs, so it is
+  not claimed above 50%. r04 shows the tool correctly reports when no fix helps.
+- The point is that the method **works on real data**; at ~1M rows the absolute
+  times are small.
