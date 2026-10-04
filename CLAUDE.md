@@ -112,11 +112,21 @@ requests). They are additions only — nothing existing was renamed or removed.
   * Input: Human-readable explanation string (must pass leak check)
   * Output: Path to cached .mp3 audio file or raw audio bytes
   * Behavior: Returns cached audio if text was previously synthesized; raises Error on data leak.
-  * **Offline engine only** (e.g. `pyttsx3` or Piper). Never an online TTS service
-    such as gTTS: the explanation must not leave the laptop.
-  * **Always returns a `Path`** (agreed day 2), so callers handle one type. The
-    `| bytes` in the signature above is kept only for the record.
-  * The audio cache folder is **git-ignored**; never commit generated audio.
+  * **Changed day 2 (lead's decision, overrides the earlier "offline only" rule):**
+    the merged code uses **ElevenLabs (online)**. Actual API: `speak(text, mapping=None)
+    -> Path` and `speak_debrief(result, mapping=None) -> Path` (not `generate_safe_audio`).
+    The text is leak-checked (`find_leaks`, free-text mode) BEFORE it is sent or read
+    from cache; only masked text may leave the laptop.
+  * Audio cache `privacy/.audio_cache/` is **git-ignored**; never commit generated audio.
+  * API keys only from environment variables (`ELEVENLABS_TTS_API_KEY`,
+    `ELEVENLABS_STT_API_KEY`, fallback `ELEVENLABS_API_KEY`); never in code. No key =
+    voice features off.
+
+`privacy/stt.py` (Person 2) — **(day 2)** `transcribe(audio, filename=...) -> str`
+- Sends the admin's **voice recording to ElevenLabs** speech-to-text; transcripts cached
+  in the git-ignored audio cache.
+- ⚠️ A recording **cannot be leak-checked before it is sent**: a spoken real name
+  leaves the laptop. Typed questions stay local. Say this honestly in README / demo.
 
 Privacy notes (put in README): numbered placeholders reveal that two values are
 EQUAL, never what they are. Row counts, selectivities and result checksums are

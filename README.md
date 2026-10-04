@@ -107,6 +107,11 @@ The train split is also 100/100 clean.
 pattern (email, card number). Other sensitive formats need their own pattern.
 
 ## Assumptions and limitations
+- **Optional voice feature uses ElevenLabs (online).** Typed questions and the whole
+  analysis stay on the laptop (local Postgres, local LLM). With an `ELEVENLABS_API_KEY`
+  set, spoken answers are generated from **masked, leak-checked text only**, but spoken
+  **questions** are sent as audio for transcription and cannot be leak-checked first,
+  so a name said aloud would leave the machine. Without a key, voice is off.
 - HypoPG simulates indexes only; partitioning is simulated on a partitioned
   copy of `orders` in its own schema (`part_orders_order_date`).
 - Sharding needs several servers; partitioning is shown as its single-machine form.
