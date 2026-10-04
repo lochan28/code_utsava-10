@@ -81,18 +81,26 @@ def test_a_fix_the_sandbox_cannot_build_is_a_valueerror_not_a_dead_time_fn():
     assert tf(masked, actions=[INDEX])["results_match"] is True    # and time_fn still works afterwards
 
 
-def test_the_same_question_is_run_once_and_other_failures_stay_timechecks():
+def test_the_baseline_is_run_once_a_fix_is_measured_fresh_each_time_unless_caching_is_switched_on():
+    assert pipeline.CACHE_FIX_TIMINGS is False          # the default: ai/'s median of 5 is real
     real, calls = sandbox.checked_run, []
 
     def spy(sql, index_sqls=[]):
         calls.append((sql, tuple(index_sqls)))
         return real(sql, index_sqls)
-    with patched(sandbox, "checked_run", spy):
-        tf, masked, _ = make()                     # built INSIDE the patch: it reads sandbox.checked_run once
-        for _ in range(5):
-            tf(masked, actions=[INDEX])
-    assert len(calls) == 2, calls                                  # the baseline + the fix, once each
+    for cache, expected in ((False, 1 + 5), (True, 1 + 1)):          # baseline once; 5 fix requests -> 5 runs, or 1
+        calls.clear()
+        with patched(sandbox, "checked_run", spy), patched(pipeline, "CACHE_FIX_TIMINGS", cache):
+            tf, masked, _ = make()
+            for _ in range(5):
+                tf(masked, actions=[])                                  # the original: always one run
+                tf(masked, actions=[INDEX])
+        baseline_runs = [c for c in calls if not c[1]]
+        assert len(baseline_runs) == 1, (cache, calls)
+        assert len(calls) == expected, (cache, len(calls), calls)
 
+
+def test_other_failures_stay_timechecks():
     def boom(sql, index_sqls=[]):
         raise RuntimeError("timeout with a Rahul Sharma in it")
     with patched(sandbox, "checked_run", boom):

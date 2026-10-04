@@ -27,7 +27,7 @@ sorted below every safe fix, so it can never be the "best" one.
 2. **`cost_fn` costs one `CREATE INDEX ...` or one `PARTITION t BY RANGE (c) MONTHLY`** (`SIMULATABLE_ACTION`
    in `pipeline.py`). Anything else (YEARLY, several statements, DROP ...) raises `ValueError`, which P3
    turns into `rule_only`. For rewrites the real values are put back first (section 9).
-3. **`time_fn(masked_sql, actions=())` returns `{"ms", "results_match"}`, NOT `{"ms", "rows", "checksum"}`.** `actions` = masked CREATE INDEX / one MONTHLY partition, applied on the sandbox copy before timing (restored to real names only there). A fix the sandbox cannot build raises `ValueError` (ai/ keeps its planner figure). The same (sql, actions) is run once: `checked_run` already takes a median of 5 runs, so ai/'s 5 repeated calls cost one run. The real run's
+3. **`time_fn(masked_sql, actions=())` returns `{"ms", "results_match"}`, NOT `{"ms", "rows", "checksum"}`.** `actions` = masked CREATE INDEX / one MONTHLY partition, applied on the sandbox copy before timing (restored to real names only there). A fix the sandbox cannot build raises `ValueError` (ai/ keeps its planner figure). The original query's baseline is measured once. A fix that ai/ asks for 5 times is measured fresh each time, so its "median of 5" is real (about 20-30 s more per analysis); set `CACHE_FIX_TIMINGS = True` at the top of `pipeline.py` to reuse the first answer instead (faster, one sample per fix). The real run's
    rows and checksum are compared inside `pipeline.py` (against the original query) and never go to
    `ai/`. This means no value derived from real result rows reaches `ai/`, so there is nothing to
    approve about that. **It breaks P3's `ai/verify.py`** (reads `rows` and `checksum` directly).

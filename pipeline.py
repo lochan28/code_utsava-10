@@ -36,6 +36,11 @@ PRIVACY_STRICT = os.environ.get("PRIVACY_STRICT", "1") != "0"
                            # analysis STOPS before the AI runs. Set PRIVACY_STRICT=0 to
                            # only warn (the event is still logged and the page shows
                            # "LEAK DETECTED"). The LLM prompt check stays on either way.
+CACHE_FIX_TIMINGS = False  # How time_fn treats a repeated request for the SAME fix (ai/ asks 5 times and takes
+                           # the median). False (default): each request is measured fresh, so the median
+                           # of 5 is real (steadier when two fixes are a few ms apart, but about 20-30 s
+                           # slower per analysis). True: the first answer is reused (faster, but each fix
+                           # then has ONE sample). The original query's baseline is always cached.
 BLOCKED_MESSAGE = ("A value may not be masked, so the analysis was stopped for safety. "
                    "This was recorded in the audit log.")
 
@@ -288,8 +293,9 @@ def make_time_fn(original_sql, masked_original, mapping, checks, restore=None):
     An action the sandbox cannot build raises ValueError (ai/ then keeps its planner estimate);
     any other failure raises TimeCheckError. Every call is recorded in `checks` (a list).
 
-    checked_run already reports the MEDIAN of several runs, so asking again for the same
-    (sql, actions) returns the first answer instead of re-running it (it saves minutes of sandbox time)."""
+    The ORIGINAL query's baseline (no actions) is measured once and reused. A fix asked for again is
+    measured fresh each time, so ai/'s "median of 5" is real, unless CACHE_FIX_TIMINGS is on (then
+    the first answer is reused to save sandbox time, and each fix gets one sample)."""
     run = getattr(sandbox, "checked_run", None)
     if run is None:
         return None
@@ -302,7 +308,8 @@ def make_time_fn(original_sql, masked_original, mapping, checks, restore=None):
             if not SIMULATABLE_ACTION.fullmatch(action):
                 raise ValueError("Only one CREATE INDEX or one MONTHLY partition can be timed.")
         key = (m_sql, tuple(actions))
-        if key in answers:
+        is_baseline = m_sql == masked_original and not actions
+        if key in answers and (is_baseline or CACHE_FIX_TIMINGS):
             return dict(answers[key])
         try:
             # RESTORE POINT 2 of 3 (sandbox call): the SQL and the actions get their real names and
