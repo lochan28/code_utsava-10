@@ -170,38 +170,14 @@ def test_deploy_rewrites_are_aligned_with_the_recommendations_and_real():
 PLACEHOLDER_SQL = "SELECT c.name FROM customers c WHERE c.segment = $1 AND c.customer_id <= $2"     # like the slow-query log
 
 
-def test_a_query_with_placeholders_can_be_costed_many_times_once_auto_prepare_is_off():
-    conn = sandbox._connection()
-    conn.prepare_threshold = 5                                   # psycopg's default
-    unique = uuid.uuid4().hex[:8]                                # fresh text: the driver remembers prepared statements
-    for variant, switch_off in ((f"-- without the stopgap {unique}", False), (f"-- with the stopgap {unique}", True)):
-        if switch_off:
-            pipeline._no_auto_prepare()
-        failed_at = None
-        for i in range(1, 13):
-            try:
-                sandbox.cost(f"{PLACEHOLDER_SQL} {variant}")
-            except Exception as e:                               # noqa: BLE001
-                failed_at = (i, type(e).__name__)
-                conn.rollback()
-                break
-        assert (failed_at is None) == switch_off, (variant, failed_at)
-        if not switch_off:
-            assert failed_at == (6, "ProtocolViolation"), failed_at   # the bug itself: the 6th run
-    assert conn.prepare_threshold is None
-
-
-def test_analyze_switches_auto_prepare_off_before_ai_costs_anything():
-    sandbox._connection().prepare_threshold = 5
-    run_with([rec("index", INDEX_M)])
+def test_a_query_with_placeholders_can_be_costed_many_times():
+    """Regression guard: psycopg auto-prepares a query after 5 runs, which broke EXPLAIN on
+    $1/$2 queries on the 6th run (ProtocolViolation). db/sandbox.py now connects with
+    prepare_threshold=None, so 12 runs in a row must pass."""
     assert sandbox._connection().prepare_threshold is None
-
-
-def test_the_stopgap_never_stops_an_analysis():
-    def broken():
-        raise RuntimeError("no connection")
-    with patched(sandbox, "_connection", broken):
-        pipeline._no_auto_prepare()                              # must not raise
+    variant = f"-- {uuid.uuid4().hex[:8]}"                      # fresh text: the driver remembers statements
+    for _ in range(12):
+        sandbox.cost(f"{PLACEHOLDER_SQL} {variant}")
 
 
 def test_analyses_run_one_at_a_time_even_when_several_sessions_ask_together():
